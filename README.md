@@ -7,11 +7,6 @@
 </p>
 
 <p align="center">
-<a href="https://packagist.org/packages/syriable/ledger"><img src="https://img.shields.io/packagist/v/syriable/ledger.svg?style=flat-square" alt="Latest Version on Packagist"></a>
-<a href="https://packagist.org/packages/syriable/ledger"><img src="https://img.shields.io/packagist/dt/syriable/ledger.svg?style=flat-square" alt="Total Downloads"></a>
-</p>
-
-<p align="center">
 <a href="https://packagist.org/packages/syriable/laravel-ledger"><img src="https://img.shields.io/packagist/v/syriable/laravel-ledger.svg?style=flat-square" alt="Latest Version on Packagist"></a>
 <a href="https://github.com/syriable/laravel-ledger/actions?query=workflow%3Arun-tests+branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/syriable/laravel-ledger/run-tests.yml?branch=main&label=tests&style=flat-square" alt="GitHub Tests Action Status"></a>
 <a href="https://github.com/syriable/laravel-ledger/actions?query=workflow%3A%22Fix+PHP+code+style+issues%22+branch%3Amain"><img src="https://img.shields.io/github/actions/workflow/status/syriable/laravel-ledger/fix-php-code-style-issues.yml?branch=main&label=code%20style&style=flat-square" alt="GitHub Code Style Action Status"></a>
