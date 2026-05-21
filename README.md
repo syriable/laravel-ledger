@@ -206,9 +206,12 @@ $user->account('available.usd')->balance();
 php artisan ledger:verify                    # all ledgers
 php artisan ledger:verify --ledger=platform-main
 php artisan ledger:rebuild-balances          # rebuild projections from entries
+php artisan ledger:simulate                  # rehearse a marketplace at volume
 ```
 
 `ledger:verify` checks that every transaction balances, every ledger is zero-sum, and every balance projection matches the entries. It exits non-zero on drift — wire it into your scheduler and your CI.
+
+`ledger:simulate` drives a realistic marketplace lifecycle through the real API at volume and verifies the result against an independent shadow ledger — a one-command way to stress-test the package before trusting it with real money. Run it only against a disposable database, and run `php artisan migrate:fresh` before each run to avoid reference collisions with previous runs. See [`docs/09-operations.md`](docs/09-operations.md#rehearsing-a-deployment-with-ledgersimulate).
 
 ## Core invariants
 

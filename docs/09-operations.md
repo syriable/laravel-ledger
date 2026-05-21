@@ -2,6 +2,71 @@
 
 What to do, when, and what to be alarmed about.
 
+## Rehearsing a deployment with `ledger:simulate`
+
+Before you trust the ledger with real money, rehearse it. `ledger:simulate` drives a realistic marketplace lifecycle — orders, escrow, completions, partial refunds, reversals, payouts — through the **real** public API at volume, then verifies the result three independent ways.
+
+```bash
+php artisan ledger:simulate
+php artisan ledger:simulate --sellers=200 --orders=20000
+php artisan ledger:simulate --orders=5000 --seed=12345
+```
+
+It is a load-testing and confidence tool. Run it against a **scratch database** — it creates its own ledger and accounts; it is not meant to touch production data.
+
+> **Refresh the database before every run.** `ledger:simulate` persists real transactions, and it generates idempotency references from sequential order ids (`sim.order.paid:order-1`, `sim.order.paid:order-2`, …). Those references are **not unique across runs** — a second run reuses the references from the first. Because the ledger is idempotent, every posting in the second run is then treated as a replay of the first; the simulation reports `Unexpected replay on first post …` and will fail (for example with `ReversalNotAllowedException` when it tries to reverse a transaction the previous run already reversed).
+>
+> Always start each run from a clean database:
+>
+> ```bash
+> php artisan migrate:fresh
+> php artisan ledger:simulate --sellers=200 --orders=20000
+> ```
+>
+> If you cannot refresh the whole database, at minimum use a `--ledger` slug that has never been simulated into before — but `migrate:fresh` is the reliable choice. Run the simulator only against a disposable database.
+
+### What it does
+
+1. Bootstraps a ledger, platform accounts, and N seller accounts.
+2. Simulates a stream of orders. Each order is paid; most complete (escrow → available); a few are partially refunded; a few are reversed as mistakes.
+3. Runs end-of-run payouts for a share of sellers.
+4. Deliberately re-posts a percentage of operations to exercise idempotency.
+
+### How it verifies
+
+The simulation only succeeds if **all three** of these pass:
+
+1. **Shadow check.** The command keeps its own in-memory tally of what every balance _should_ be, computed without using the package. Every `balance()` (projection) and every `balanceAsOf(now())` (aggregation) must match that independent shadow.
+2. **Zero-sum check.** Across the whole ledger, total debits must equal total credits.
+3. **`ledger:verify`.** The standard integrity command must pass.
+
+If any check fails, the command exits non-zero and prints exactly what diverged.
+
+### Options
+
+| Option            | Default  | Purpose                                         |
+| ----------------- | -------- | ----------------------------------------------- |
+| `--sellers`       | 50       | Seller accounts to create.                      |
+| `--orders`        | 2000     | Orders to simulate.                             |
+| `--currency`      | USD      | Simulation currency.                            |
+| `--ledger`        | sim-main | Slug of the ledger to simulate into.            |
+| `--seed`          | 20260101 | RNG seed — fix it for a reproducible run.       |
+| `--complete-rate` | 85       | Percent of paid orders that complete.           |
+| `--refund-rate`   | 8        | Percent of completed orders partially refunded. |
+| `--reversal-rate` | 3        | Percent of paid orders reversed.                |
+| `--payout-rate`   | 60       | Percent of sellers paid out at the end.         |
+| `--replay-rate`   | 5        | Percent of postings deliberately re-posted.     |
+
+Because the run is seeded, a failure is reproducible: re-run with the same `--seed` and the same scale to get the identical sequence. It also reports throughput (postings/second) and `ledger:verify` runtime — useful for spotting where verification slows down as data grows.
+
+### When to run it
+
+- Before a first production deployment — a green run is meaningful evidence the lifecycle logic is sound.
+- In CI, at a modest scale, as a regression guard.
+- After changing anything in `Recording/` or in your own Postings.
+
+It does **not** prove concurrency safety — a single-process simulation cannot. That needs genuine parallel writers against PostgreSQL or MySQL.
+
 ## Daily verification
 
 Run `ledger:verify` against production at least daily. Wire it into your scheduler:
@@ -25,12 +90,12 @@ Exit code 1 on any drift. If your monitoring is paging you, **stop processing pa
 
 The projection drifting from entries is a symptom, not a cause. Common causes:
 
-| Symptom | Likely cause | Fix |
-| --- | --- | --- |
-| One account's projection is wrong | A bug in a custom `BalanceProjector`, or a manual DB write | Rebuild balances; audit the custom projector |
-| Many accounts off by the same delta | A migration ran without using the recorder | Rebuild balances; never write to ledger tables outside the recorder |
-| Zero-sum violation on a ledger | A corrupted entry insert (extremely rare) | **Stop the world.** Investigate the corruption with logs; do not rebuild before you understand it |
-| `transactions.amount != Σ entries` for one row | Manual DB tampering | Same as above |
+| Symptom                                        | Likely cause                                               | Fix                                                                                               |
+| ---------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| One account's projection is wrong              | A bug in a custom `BalanceProjector`, or a manual DB write | Rebuild balances; audit the custom projector                                                      |
+| Many accounts off by the same delta            | A migration ran without using the recorder                 | Rebuild balances; never write to ledger tables outside the recorder                               |
+| Zero-sum violation on a ledger                 | A corrupted entry insert (extremely rare)                  | **Stop the world.** Investigate the corruption with logs; do not rebuild before you understand it |
+| `transactions.amount != Σ entries` for one row | Manual DB tampering                                        | Same as above                                                                                     |
 
 ### Rebuild the projection
 
