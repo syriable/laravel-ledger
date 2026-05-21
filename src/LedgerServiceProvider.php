@@ -8,6 +8,7 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\ServiceProvider;
 use Syriable\Ledger\Commands\MakePostingCommand;
 use Syriable\Ledger\Commands\RebuildBalancesCommand;
+use Syriable\Ledger\Commands\SimulateCommand;
 use Syriable\Ledger\Commands\VerifyLedgerCommand;
 use Syriable\Ledger\Recording\BalanceProjector;
 use Syriable\Ledger\Recording\Clock;
@@ -94,6 +95,7 @@ final class LedgerServiceProvider extends ServiceProvider
                 MakePostingCommand::class,
                 VerifyLedgerCommand::class,
                 RebuildBalancesCommand::class,
+                SimulateCommand::class,
             ]);
         }
     }
