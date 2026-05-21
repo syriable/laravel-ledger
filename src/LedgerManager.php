@@ -1,0 +1,231 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Syriable\Ledger;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Str;
+use Syriable\Ledger\Data\PostingResult;
+use Syriable\Ledger\Enums\AccountType;
+use Syriable\Ledger\Events\AccountArchived;
+use Syriable\Ledger\Events\AccountOpened;
+use Syriable\Ledger\Exceptions\LedgerNotFoundException;
+use Syriable\Ledger\Exceptions\ReversalNotAllowedException;
+use Syriable\Ledger\Models\Account;
+use Syriable\Ledger\Models\Ledger as LedgerModel;
+use Syriable\Ledger\Models\Transaction;
+use Syriable\Ledger\Postings\Posting;
+use Syriable\Ledger\Postings\ReversalPosting;
+use Syriable\Ledger\Recording\Clock;
+use Syriable\Ledger\Recording\TransactionRecorder;
+use Syriable\Ledger\ValueObjects\AccountCode;
+
+/**
+ * LedgerManager — the backing class behind the Ledger facade.
+ *
+ * Three verbs only: openAccount, post, reverse.
+ * Plus the small lifecycle helpers: createLedger, for(slug), archiveAccount.
+ */
+final class LedgerManager
+{
+    public function __construct(
+        private readonly TransactionRecorder $recorder,
+        private readonly Clock $clock,
+    ) {}
+
+    /**
+     * Create a new Ledger. Idempotent on slug — returns the existing ledger
+     * if one exists, otherwise creates and emits no event (ledger lifecycle
+     * is administrative, not financial).
+     *
+     * @param  array<string,mixed>  $metadata
+     */
+    public function createLedger(
+        string $slug,
+        string $currency,
+        ?string $name = null,
+        ?string $tenantId = null,
+        array $metadata = [],
+    ): LedgerModel {
+        /** @var LedgerModel|null $existing */
+        $existing = LedgerModel::query()->where('slug', $slug)->first();
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        LedgerModel::openRecorderWindow();
+        try {
+            $ledger = new LedgerModel;
+            $ledger->id = (string) Str::orderedUuid();
+            $ledger->slug = $slug;
+            $ledger->name = $name ?? $slug;
+            $ledger->default_currency = strtoupper($currency);
+            $ledger->tenant_id = $tenantId;
+            $ledger->metadata = $metadata === [] ? null : $metadata;
+            $ledger->save();
+        } catch (UniqueConstraintViolationException $e) {
+            // Lost a race against another process — fetch and return the winner.
+            /** @var LedgerModel|null $winner */
+            $winner = LedgerModel::query()->where('slug', $slug)->first();
+            if ($winner === null) {
+                throw $e;
+            }
+
+            return $winner;
+        } finally {
+            LedgerModel::closeRecorderWindow();
+        }
+
+        return $ledger;
+    }
+
+    /**
+     * Scope subsequent calls (openAccount, etc.) to a ledger by slug.
+     */
+    public function for(string $slug): LedgerScope
+    {
+        /** @var LedgerModel|null $ledger */
+        $ledger = LedgerModel::query()->where('slug', $slug)->first();
+        if ($ledger === null) {
+            throw LedgerNotFoundException::bySlug($slug);
+        }
+
+        return new LedgerScope($ledger, $this);
+    }
+
+    /**
+     * Open an account inside a ledger. Idempotent on (ledger_id, code).
+     *
+     * @param  array<string,mixed>  $metadata
+     */
+    public function openAccount(
+        LedgerModel $ledger,
+        string $code,
+        AccountType $type,
+        string $currency,
+        ?string $name = null,
+        ?Model $owner = null,
+        array $metadata = [],
+    ): Account {
+        $codeVo = new AccountCode($code);
+
+        /** @var Account|null $existing */
+        $existing = Account::query()
+            ->where('ledger_id', $ledger->id)
+            ->where('code', $codeVo->value)
+            ->first();
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        Account::openRecorderWindow();
+        try {
+            $account = new Account;
+            $account->id = (string) Str::orderedUuid();
+            $account->ledger_id = $ledger->id;
+            $account->code = $codeVo->value;
+            $account->name = $name ?? $codeVo->value;
+            $account->type = $type;
+            $account->currency = strtoupper($currency);
+            $account->is_archived = false;
+            $account->metadata = $metadata === [] ? null : $metadata;
+
+            if ($owner !== null) {
+                $account->ownerable_type = $owner::class;
+                /** @var string $ownerId */
+                $ownerId = $owner->getKey();
+                $account->ownerable_id = $ownerId;
+            }
+
+            try {
+                $account->save();
+            } catch (UniqueConstraintViolationException $e) {
+                // Lost a race; fetch the winner.
+                /** @var Account|null $winner */
+                $winner = Account::query()
+                    ->where('ledger_id', $ledger->id)
+                    ->where('code', $codeVo->value)
+                    ->first();
+
+                if ($winner === null) {
+                    throw $e;
+                }
+
+                return $winner;
+            }
+        } finally {
+            Account::closeRecorderWindow();
+        }
+
+        // The generated `normal_balance` column is computed by the database;
+        // reload it so the in-memory model sees the persisted value.
+        $account->refresh();
+
+        event(new AccountOpened($account));
+
+        return $account;
+    }
+
+    /**
+     * Archive an account. Archived accounts retain history but reject new
+     * non-reversal entries.
+     */
+    public function archiveAccount(Account $account): Account
+    {
+        if ($account->is_archived) {
+            return $account;
+        }
+
+        Account::openRecorderWindow();
+        try {
+            $account->is_archived = true;
+            $account->save();
+        } finally {
+            Account::closeRecorderWindow();
+        }
+
+        event(new AccountArchived($account));
+
+        return $account;
+    }
+
+    /**
+     * Post a Posting. Idempotent on the Posting's reference.
+     */
+    public function post(Posting $posting): PostingResult
+    {
+        $ledger = $this->resolveLedger($posting->ledger());
+        $draft = $posting->toDraft($ledger->id, $this->clock);
+
+        return $this->recorder->record($draft);
+    }
+
+    /**
+     * Reverse a prior transaction with a compensating one.
+     */
+    public function reverse(Transaction $original, ?string $reason = null): PostingResult
+    {
+        // Eager-load relations the reversal needs.
+        $original->loadMissing(['entries', 'ledger']);
+
+        if ($original->isReversed()) {
+            throw ReversalNotAllowedException::alreadyReversed($original->id);
+        }
+
+        return $this->post(new ReversalPosting($original, $reason));
+    }
+
+    private function resolveLedger(string $slug): LedgerModel
+    {
+        /** @var LedgerModel|null $ledger */
+        $ledger = LedgerModel::query()->where('slug', $slug)->first();
+        if ($ledger === null) {
+            throw LedgerNotFoundException::bySlug($slug);
+        }
+
+        return $ledger;
+    }
+}

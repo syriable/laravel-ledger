@@ -1,0 +1,63 @@
+<?php
+
+declare(strict_types=1);
+
+namespace {{ namespace }};
+
+use Syriable\Ledger\Data\EntryDraft;
+use Syriable\Ledger\Postings\Posting;
+use Syriable\Ledger\ValueObjects\Reference;
+
+/**
+ * {{ class }}
+ *
+ * Rules:
+ *   - Be deterministic: given the same constructor inputs, entries() and
+ *     reference() must return identical results on every call. Retries
+ *     depend on this.
+ *   - No I/O inside entries(). Pre-compute every Money value before
+ *     constructing this class.
+ *   - Use a dot-scoped reference (e.g. "order.paid:{$id}"). The Reference
+ *     value object enforces this.
+ */
+final class {{ class }} extends Posting
+{
+    public function __construct(
+        // Inject the precomputed inputs your entries depend on, e.g.:
+        // private readonly string $orderId,
+        // private readonly \Syriable\Ledger\ValueObjects\Money $total,
+    ) {
+    }
+
+    public function ledger(): string
+    {
+        return 'platform-main';
+    }
+
+    public function reference(): Reference
+    {
+        // Replace 'domain.event' and the parts with your idempotency key.
+        return Reference::for('domain.event', 'replace-me');
+    }
+
+    public function currency(): string
+    {
+        return 'USD';
+    }
+
+    public function description(): ?string
+    {
+        return null;
+    }
+
+    /**
+     * @return list<EntryDraft>
+     */
+    public function entries(): array
+    {
+        return [
+            // EntryDraft::debit($account, $money),
+            // EntryDraft::credit($account, $money),
+        ];
+    }
+}

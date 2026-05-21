@@ -1,0 +1,74 @@
+{
+    "name": "syriable/laravel-ledger",
+    "description": "An immutable, append-only, double-entry financial ledger engine for Laravel.",
+    "keywords": [
+        "syriable",
+        "laravel",
+        "ledger",
+        "accounting",
+        "double-entry",
+        "finance",
+        "immutable"
+    ],
+    "homepage": "https://github.com/syriable/laravel-ledger",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Syriable",
+            "role": "Maintainer"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "illuminate/contracts": "^11.0 || ^12.0",
+        "illuminate/database": "^11.0 || ^12.0",
+        "illuminate/events": "^11.0 || ^12.0",
+        "illuminate/support": "^11.0 || ^12.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.0",
+        "orchestra/testbench": "^9.0 || ^10.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0",
+        "laravel/pint": "^1.18"
+    },
+    "autoload": {
+        "psr-4": {
+            "Syriable\\Ledger\\": "src/",
+            "Syriable\\Ledger\\Database\\Factories\\": "database/factories/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Syriable\\Ledger\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "test-coverage": "vendor/bin/pest --coverage",
+        "analyse": "vendor/bin/phpstan analyse",
+        "format": "vendor/bin/pint"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Syriable\\Ledger\\LedgerServiceProvider"
+            ],
+            "aliases": {
+                "Ledger": "Syriable\\Ledger\\Facades\\Ledger"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "support": {
+        "issues": "https://github.com/syriable/laravel-ledger/issues",
+        "source": "https://github.com/syriable/laravel-ledger"
+    }
+}
