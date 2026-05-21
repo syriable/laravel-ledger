@@ -1,27 +1,26 @@
-<svg width="600" height="180" viewBox="0 0 600 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="600" height="180" fill="none"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="100%" height="100%">
+    <defs>
+        <style>
+            .text-main { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 54px; font-weight: 800; fill: #111827; }
+            .text-sub { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 54px; font-weight: 300; fill: #6B7280; }
+        </style>
+    </defs>
 
-  <!-- Ledger mark: a balanced double-entry scale built from two columns -->
-  <g transform="translate(48, 40)">
-    <!-- center beam -->
-    <rect x="46" y="0" width="8" height="100" rx="2" fill="#0F172A"/>
-    <!-- top crossbar -->
-    <rect x="6" y="14" width="88" height="8" rx="4" fill="#0F172A"/>
-    <!-- left pan (debit) -->
-    <path d="M6 18 L-14 50 L26 50 Z" fill="#1D4ED8"/>
-    <line x1="10" y1="18" x2="-14" y2="50" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/>
-    <line x1="10" y1="18" x2="26" y2="50" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/>
-    <!-- right pan (credit) -->
-    <path d="M94 18 L74 50 L114 50 Z" fill="#059669"/>
-    <line x1="90" y1="18" x2="74" y2="50" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/>
-    <line x1="90" y1="18" x2="114" y2="50" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/>
-    <!-- base -->
-    <rect x="22" y="98" width="56" height="8" rx="4" fill="#0F172A"/>
-  </g>
+    <g transform="translate(90, 68)">
+        <rect x="16" y="0" width="76" height="52" rx="8" fill="#FF2D20" opacity="0.35" />
+        <rect x="0" y="12" width="76" height="52" rx="8" fill="#FF2D20" />
+        
+        <line x1="28" y1="20" x2="28" y2="56" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" opacity="0.6" />
+        
+        <line x1="10" y1="24" x2="20" y2="24" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+        <line x1="36" y1="24" x2="66" y2="24" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+        
+        <line x1="10" y1="34" x2="22" y2="34" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+        <line x1="36" y1="34" x2="52" y2="34" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+        
+        <line x1="10" y1="44" x2="18" y2="44" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+        <line x1="36" y1="44" x2="60" y2="44" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+    </g>
 
-  <!-- Wordmark -->
-  <g transform="translate(200, 0)">
-    <text x="0" y="92" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="48" font-weight="800" fill="#0F172A" letter-spacing="-1">Laravel Ledger</text>
-    <text x="2" y="124" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" font-weight="500" fill="#64748B" letter-spacing="0.5">immutable · append-only · double-entry</text>
-  </g>
+    <text x="210" y="118" class="text-main">Syriable<tspan class="text-sub" dx="12">Ledger</tspan></text>
 </svg>

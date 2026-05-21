@@ -2,8 +2,13 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="art/ledger-dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="art/ledger-light.svg">
-    <img alt="Laravel Ledger Logo" src="art/ledger-light.svg" width="600">
+    <img alt="SyriableLedger Logo" src="art/ledger-light.svg" width="600">
   </picture>
+</p>
+
+<p align="center">
+<a href="https://packagist.org/packages/syriable/ledger"><img src="https://img.shields.io/packagist/v/syriable/ledger.svg?style=flat-square" alt="Latest Version on Packagist"></a>
+<a href="https://packagist.org/packages/syriable/ledger"><img src="https://img.shields.io/packagist/dt/syriable/ledger.svg?style=flat-square" alt="Total Downloads"></a>
 </p>
 
 <p align="center">
