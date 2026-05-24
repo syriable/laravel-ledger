@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Syriable\Ledger\Commands;
 
 use Illuminate\Console\Command;
+use Random\Engine\Mt19937;
+use Random\Randomizer;
 use Syriable\Ledger\Data\PostingResult;
 use Syriable\Ledger\Enums\AccountType;
 use Syriable\Ledger\Enums\EntryDirection;
@@ -65,6 +67,8 @@ final class SimulateCommand extends Command
 
     private int $reversalsDone = 0;
 
+    private Randomizer $rng;
+
     public function handle(): int
     {
         $sellersCount = max(1, (int) $this->option('sellers'));
@@ -73,7 +77,8 @@ final class SimulateCommand extends Command
         $ledgerSlug = $this->stringOption('ledger');
         $seed = (int) $this->option('seed');
 
-        mt_srand($seed);
+        // Local, seeded RNG — does not touch the global mt_rand() state.
+        $this->rng = new Randomizer(new Mt19937($seed));
 
         $this->components->info("Ledger simulation — {$sellersCount} sellers, {$ordersCount} orders, seed {$seed}");
         $this->shadow = new ShadowLedger;
@@ -150,13 +155,13 @@ final class SimulateCommand extends Command
         $bar->start();
 
         for ($n = 1; $n <= $ordersCount; $n++) {
-            $sellerIndex = mt_rand(1, count($this->sellers));
+            $sellerIndex = $this->rng->getInt(1, count($this->sellers));
             $seller = $this->sellers[$sellerIndex];
 
             // Realistic order amounts: $5.00 - $500.00 in minor units.
-            $total = mt_rand(500, 50_000);
+            $total = $this->rng->getInt(500, 50_000);
             // Commission is 10-20% of the total.
-            $commission = (int) floor($total * mt_rand(10, 20) / 100);
+            $commission = (int) floor($total * $this->rng->getInt(10, 20) / 100);
             $sellerNet = $total - $commission;
 
             $orderId = "order-{$n}";
@@ -177,8 +182,8 @@ final class SimulateCommand extends Command
 
                 // A few completed orders get a partial refund.
                 if ($this->roll($refundRate)) {
-                    $refundAmount = (int) floor($sellerNet * mt_rand(10, 50) / 100);
-                    $commissionClaw = (int) floor($commission * mt_rand(10, 50) / 100);
+                    $refundAmount = (int) floor($sellerNet * $this->rng->getInt(10, 50) / 100);
+                    $commissionClaw = (int) floor($commission * $this->rng->getInt(10, 50) / 100);
 
                     if ($refundAmount > 0 && $commissionClaw > 0) {
                         $this->postPartialRefund($slug, $currency, $orderId, $seller, $refundAmount, $commissionClaw);
@@ -525,7 +530,7 @@ final class SimulateCommand extends Command
             return true;
         }
 
-        return mt_rand(1, 100) <= $percent;
+        return $this->rng->getInt(1, 100) <= $percent;
     }
 
     private function stringOption(string $name): string
