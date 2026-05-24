@@ -43,6 +43,29 @@ A validator receives the draft and the **already-resolved** accounts collection 
 - **Pure.** No database queries, no HTTP, no cache. Everything a validator needs is in its two arguments. The accounts are already loaded — do not re-query them.
 - **Additive only.** Your validator can reject drafts the required validators would have accepted. It cannot *accept* drafts they would reject — they always run first.
 - **Throw, don't return false.** Signal failure by throwing. A clear, specific exception message is part of the contract.
+- **Trust the precondition.** The recorder guarantees every `accountId` in the draft exists in the `$accounts` collection before your validator runs. You do not need to defensively check for `null` accounts — that would re-do the recorder's work, and PHPStan will flag the dead branch.
+
+### Verifying purity in your own tests
+
+A simple Pest test catches accidental I/O in a validator by listening for DB queries during the validate() call:
+
+```php
+use Illuminate\Support\Facades\DB;
+
+it('AmountCeilingValidator is pure', function (): void {
+    $issued = 0;
+    DB::listen(function () use (&$issued): void { $issued++; });
+
+    (new \App\Ledger\Validators\AmountCeilingValidator)->validate(
+        $draft,    // any TransactionDraft fixture
+        $accounts, // a Collection<string, Account>
+    );
+
+    expect($issued)->toBe(0);
+});
+```
+
+This pattern catches the most common purity violation (an accidental Eloquent query) without dragging in a custom static-analysis framework.
 
 ### Example — cap any single transaction at $10,000
 
