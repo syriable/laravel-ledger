@@ -71,6 +71,15 @@ No `SoftDeletes` trait on any financial model. Deletion of any kind is forbidden
 
 The `Money` constructor accepts `int` and `string` (currency only). Float values trigger a TypeError at the language level.
 
+## posted_at must be within configured bounds
+
+Caller-supplied `posted_at` is the column every `balanceAsOf()` query uses. The `PostedAtBoundsValidator` rejects:
+
+- timestamps more than `ledger.max_clock_skew_seconds` ahead of the package Clock (default 300s),
+- timestamps before an explicit `ledger.historical_lower_bound` if one is configured.
+
+This closes the silent-corruption channel where a buggy or hostile Posting writes `posted_at = '9999-12-31'` or `'1900-01-01'` and skews every audit report forever.
+
 ---
 
 ## What enforces what
@@ -84,6 +93,7 @@ The `Money` constructor accepts `int` and `string` (currency only). Float values
 | Archived rejection | `AccountStateValidator` | (PHP only) |
 | Min 2 entries | `MinimumEntriesValidator` | (PHP only) |
 | Positive amount | `PositiveAmountValidator` | `CHECK (amount > 0)` (Postgres) |
+| posted_at bounds | `PostedAtBoundsValidator` | (PHP only) |
 | Unique reference | (none) | `UNIQUE(ledger_id, reference)` |
 | Once-only reversal | (none) | `UNIQUE(reverses_transaction_id)` |
 | Currency format | (none) | `CHECK (currency ~ '^[A-Z]{3}$')` (Postgres) |
