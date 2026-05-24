@@ -16,6 +16,11 @@ use Syriable\Ledger\Models\Account;
  * the draft or the accounts. They throw a LedgerException on violation;
  * silence means pass.
  *
+ * Precondition guaranteed by the recorder before the pipeline runs: every
+ * accountId referenced by $draft->entries appears as a key in $accounts.
+ * Validators may rely on this without re-checking — the recorder's
+ * AccountNotFoundException already covers the missing-account case.
+ *
  * Validators may NEVER weaken the package's required invariants — extension
  * validators can only add additional checks on top of the defaults.
  */
