@@ -11,6 +11,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+A production-hardening pass focused on correctness, concurrency, and operational scalability. The public API is unchanged in shape; existing code keeps working.
+
+### Added
+
+- **`Ledger::postMany(iterable<Posting>)`** — batch posting API that records every Posting in a single DB transaction. Atomic per batch; per-Posting idempotency preserved.
+- **`Posting::type()`** — stable, refactor-proof token persisted in `transactions.posting_type` (defaults to FQCN for backward compatibility). `ReversalPosting` reports `ledger.reversal`.
+- **`Account::scopeWithBalance()`** — eager-loads the balance projection to eliminate the `balance()`-in-a-loop N+1.
+- **`LedgerWriteFailedException`** — wraps terminal `QueryException`s after retry exhaustion so `catch (LedgerException)` covers every package-level write failure.
+- **`PostedAtBoundsValidator`** (required) — rejects postings beyond `ledger.max_clock_skew_seconds` in the future (default 300s) or before an optional `ledger.historical_lower_bound`. Closes the silent-corruption channel on `balanceAsOf` queries.
+- **`IdempotencyMatch` DTO** — lightweight return type from `IdempotencyStore::find()`, replacing the full Eloquent `Transaction` so non-DB implementations can satisfy the contract honestly.
+- **`accounts.archived_at` and `accounts.archived_by`** columns — captured by `archiveAccount(Account $a, ?string $actor = null)`; surfaces in `AccountArchived` event payload.
+- **CHECK constraint parity** on MySQL/MariaDB for amount > 0, valid direction, valid account type, and currency format (previously Postgres-only). A backfill migration brings existing installs on Postgres/MySQL up to parity.
+- **MySQL 8 and Postgres 16 CI matrix** in addition to the existing SQLite matrix.
+
+### Changed
+
+- **`ledger:verify` and `ledger:rebuild-balances`** — rewritten as set-based SQL (GROUP BY aggregations / `INSERT … SELECT`). Query count is now O(1) per ledger instead of O(N) per transaction/account. Behaviour and exit codes unchanged.
+- **`WritableOnlyByRecorder`** — replaced the per-class static depth counter with a `WeakMap` keyed by the current Fiber. Concurrent coroutines (Swoole, RoadRunner, `Octane::concurrently()`) now have isolated windows.
+- **`TransactionRecorder`** — `max_attempts` is now configurable via `ledger.recorder.max_attempts`. Original transaction for `TransactionReversed` is captured before `afterCommit()` to avoid a post-write requery.
+- **`DatabaseBalanceProjector`** — projection upsert uses bound parameters instead of raw `Expression` interpolation.
+- **`Reference::for()`** — rejects parts containing a colon to prevent silent idempotency collisions between `('order.paid', '1:2')` and `('order.paid', '1', '2')`.
+- **`BalanceProjector`** contract — docblock now explicitly requires synchronous, in-transaction application. Async projection remains unsupported (write a companion package).
+- **`Posting` stub and docs** — guide authors to declare a stable `type()` token aligned with their Reference scope.
+- **Validators (`AccountCurrencyMatch`, `AccountState`, `LedgerScope`)** — stop re-checking the recorder's account-presence precondition; behaviour unchanged because the recorder already throws `AccountNotFoundException` first.
+
+### Documentation
+
+- New: Octane/Swoole/RoadRunner safety section in [Operations](docs/09-operations.md).
+- New: Batch posting recipe.
+- New: Idempotency retention semantics (references are permanent).
+- New: 64-bit PHP requirement and bigint scaling.
+- Updated: Testing guide spells out `Carbon::setTestNow()` for `SystemClock`.
+- Updated: Events guide requires `ShouldQueue` for non-trivial listeners.
+- Updated: Invariants table includes the new `posted_at` validator.
+- Updated: Period-close anti-feature explains the minimum-viable pattern.
+
+### Upgrading
+
+See [UPGRADING.md](UPGRADING.md). The migration story is:
+
+1. Run `php artisan migrate` to pick up the new migrations (`add_check_constraint_parity` and `add_archived_audit_columns`).
+2. Catch `LedgerException` instead of `QueryException` in code that handled deadlock or constraint-violation failures from `Ledger::post()`.
+3. Optional: override `Posting::type()` on existing Postings to switch from FQCN to stable tokens.
+4. If you bind a custom `IdempotencyStore`, update it to return `?IdempotencyMatch` instead of `?Transaction`.
+
 ## 0.9.0 - 2026-05-21
 
 First public release candidate. The API is stabilizing but not yet frozen;
