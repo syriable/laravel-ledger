@@ -72,9 +72,9 @@ final class TransactionRecorder
     public function record(TransactionDraft $draft): PostingResult
     {
         // 1. Cheap pre-check — short-circuit replays before any DB transaction work.
-        $existing = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
-        if ($existing !== null) {
-            return new PostingResult($existing, wasReplayed: true);
+        $match = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
+        if ($match !== null) {
+            return new PostingResult($this->hydrateReplay($match), wasReplayed: true);
         }
 
         // 2. Persist atomically with deadlock retries. The draft is captured by
@@ -262,9 +262,9 @@ final class TransactionRecorder
     {
         // A racing concurrent insert under the same reference is the
         // expected case: we re-fetch and return wasReplayed=true.
-        $existing = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
-        if ($existing !== null) {
-            return new PostingResult($existing, wasReplayed: true);
+        $match = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
+        if ($match !== null) {
+            return new PostingResult($this->hydrateReplay($match), wasReplayed: true);
         }
 
         // The violation was on reverses_transaction_id, not on reference —
@@ -284,6 +284,14 @@ final class TransactionRecorder
         $sqlState = $e->errorInfo[0] ?? null;
 
         return $sqlState === '23000' || $sqlState === '23505';
+    }
+
+    private function hydrateReplay(IdempotencyMatch $match): Transaction
+    {
+        /** @var Transaction $transaction */
+        $transaction = Transaction::query()->findOrFail($match->transactionId);
+
+        return $transaction;
     }
 
     private function isDeadlockOrLockTimeout(QueryException $e): bool
