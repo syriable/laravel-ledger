@@ -15,6 +15,8 @@ use Syriable\Ledger\Events\TransactionPosted;
 use Syriable\Ledger\Events\TransactionReversed;
 use Syriable\Ledger\Exceptions\AccountNotFoundException;
 use Syriable\Ledger\Exceptions\DuplicateReferenceException;
+use Syriable\Ledger\Exceptions\LedgerException;
+use Syriable\Ledger\Exceptions\LedgerWriteFailedException;
 use Syriable\Ledger\Exceptions\ReversalNotAllowedException;
 use Syriable\Ledger\Models\Account;
 use Syriable\Ledger\Models\Entry;
@@ -47,7 +49,7 @@ use Throwable;
  */
 final class TransactionRecorder
 {
-    private const MAX_ATTEMPTS = 3;
+    private const DEFAULT_MAX_ATTEMPTS = 3;
 
     public function __construct(
         private readonly ValidatorPipeline $validators,
@@ -56,20 +58,32 @@ final class TransactionRecorder
         private readonly Clock $clock,
     ) {}
 
+    /**
+     * @return int<1, max>
+     */
+    private function maxAttempts(): int
+    {
+        $value = config('ledger.recorder.max_attempts', self::DEFAULT_MAX_ATTEMPTS);
+        $attempts = is_numeric($value) ? (int) $value : self::DEFAULT_MAX_ATTEMPTS;
+
+        return max(1, $attempts);
+    }
+
     public function record(TransactionDraft $draft): PostingResult
     {
         // 1. Cheap pre-check — short-circuit replays before any DB transaction work.
-        $existing = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
-        if ($existing !== null) {
-            return new PostingResult($existing, wasReplayed: true);
+        $match = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
+        if ($match !== null) {
+            return new PostingResult($this->hydrateReplay($match), wasReplayed: true);
         }
 
         // 2. Persist atomically with deadlock retries. The draft is captured by
         //    closure once; retries operate on the same frozen snapshot.
+        $attempts = $this->maxAttempts();
         try {
             $transaction = DB::transaction(
                 fn () => $this->writeAtomically($draft),
-                self::MAX_ATTEMPTS,
+                $attempts,
             );
         } catch (UniqueConstraintViolationException $e) {
             // Racing concurrent insert under the same reference, or under
@@ -80,14 +94,50 @@ final class TransactionRecorder
             if ($this->isUniqueViolation($e)) {
                 return $this->resolveConstraintViolation($draft, $e);
             }
+
+            // Deadlock budget exhausted or some other terminal DB failure
+            // surfaced through DB::transaction(...) after maxAttempts().
+            if ($this->isDeadlockOrLockTimeout($e)) {
+                throw LedgerWriteFailedException::afterRetries(
+                    $draft->ledgerId,
+                    (string) $draft->reference,
+                    $attempts,
+                    $e,
+                );
+            }
+
+            throw LedgerWriteFailedException::unexpected(
+                $draft->ledgerId,
+                (string) $draft->reference,
+                $e,
+            );
+        } catch (LedgerException $e) {
+            // Validators, account-not-found, etc. — already package-typed.
             throw $e;
+        } catch (Throwable $e) {
+            // Anything else that escaped DB::transaction() (e.g. driver
+            // RuntimeExceptions, transient I/O) is wrapped so consumers can
+            // catch LedgerException for all package-level write failures.
+            throw LedgerWriteFailedException::unexpected(
+                $draft->ledgerId,
+                (string) $draft->reference,
+                $e,
+            );
         }
 
-        // 3. After-commit, exactly-once event dispatch.
-        DB::afterCommit(function () use ($transaction): void {
-            if ($transaction->isReversal()) {
-                /** @var Transaction $original */
-                $original = $transaction->reversesTransaction()->firstOrFail();
+        // 3. After-commit, exactly-once event dispatch. For reversals we
+        //    resolve the original transaction inside the still-open DB
+        //    transaction so the afterCommit callback does not have to
+        //    re-query — a post-commit DB blip would otherwise raise after
+        //    a successful write.
+        $original = null;
+        if ($transaction->isReversal()) {
+            /** @var Transaction $original */
+            $original = $transaction->reversesTransaction()->firstOrFail();
+        }
+
+        DB::afterCommit(function () use ($transaction, $original): void {
+            if ($original !== null) {
                 event(new TransactionReversed($transaction, $original));
             } else {
                 event(new TransactionPosted($transaction));
@@ -212,9 +262,9 @@ final class TransactionRecorder
     {
         // A racing concurrent insert under the same reference is the
         // expected case: we re-fetch and return wasReplayed=true.
-        $existing = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
-        if ($existing !== null) {
-            return new PostingResult($existing, wasReplayed: true);
+        $match = $this->idempotencyStore->find($draft->ledgerId, $draft->reference);
+        if ($match !== null) {
+            return new PostingResult($this->hydrateReplay($match), wasReplayed: true);
         }
 
         // The violation was on reverses_transaction_id, not on reference —
@@ -234,5 +284,27 @@ final class TransactionRecorder
         $sqlState = $e->errorInfo[0] ?? null;
 
         return $sqlState === '23000' || $sqlState === '23505';
+    }
+
+    private function hydrateReplay(IdempotencyMatch $match): Transaction
+    {
+        /** @var Transaction $transaction */
+        $transaction = Transaction::query()->findOrFail($match->transactionId);
+
+        return $transaction;
+    }
+
+    private function isDeadlockOrLockTimeout(QueryException $e): bool
+    {
+        // SQLSTATE 40001 (serialization failure) / 40P01 (Postgres deadlock)
+        // / 1213 (MySQL deadlock) / 1205 (MySQL lock wait timeout).
+        $sqlState = $e->errorInfo[0] ?? null;
+        $driverCode = $e->errorInfo[1] ?? null;
+
+        if ($sqlState === '40001' || $sqlState === '40P01') {
+            return true;
+        }
+
+        return $driverCode === 1213 || $driverCode === 1205;
     }
 }

@@ -95,6 +95,23 @@ abstract class Posting
     }
 
     /**
+     * Stable, refactor-proof identifier persisted in transactions.posting_type.
+     *
+     * Defaults to the fully-qualified class name for backward compatibility.
+     * Override with a short, stable domain token (e.g. "order.paid",
+     * "payout.settled") so renames or namespace moves do not invalidate
+     * historical rows. Once chosen, a Posting's type() must never change —
+     * change it and you orphan every prior row that used the old value.
+     *
+     * Production guidance: choose a `domain.event` token at the same time
+     * you choose the Reference scope, and keep them aligned.
+     */
+    public function type(): string
+    {
+        return static::class;
+    }
+
+    /**
      * @internal Called by the Ledger facade.
      */
     final public function toDraft(string $ledgerId, Clock $clock): TransactionDraft
@@ -105,7 +122,7 @@ abstract class Posting
             currency: $this->currency(),
             postedAt: $this->postedAt($clock),
             description: $this->description(),
-            postingType: static::class,
+            postingType: $this->type(),
             entries: $this->entries(),
             reversesTransactionId: $this->reversesTransactionId(),
             correlationId: $this->correlationId(),

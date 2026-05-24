@@ -52,4 +52,51 @@ return [
         // \App\Ledger\Validators\AmountCeilingValidator::class,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Maximum Clock Skew
+    |--------------------------------------------------------------------------
+    |
+    | Maximum number of seconds a Posting's posted_at may be in the future
+    | relative to the package Clock. Protects against clock-skew bugs and
+    | callers that backdate from the future, both of which silently corrupt
+    | every balanceAsOf() query.
+    |
+    | Set to 0 to forbid any future-dated postings. Sensible default: 300s.
+    |
+    */
+    'max_clock_skew_seconds' => env('LEDGER_MAX_CLOCK_SKEW_SECONDS', 300),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Historical Lower Bound
+    |--------------------------------------------------------------------------
+    |
+    | Optional inclusive lower bound for posted_at. Accepts:
+    |   - null   (no lower bound)
+    |   - an ISO-8601 datetime string (e.g. '2024-01-01T00:00:00Z')
+    |   - a callable returning a \DateTimeInterface
+    |
+    | Useful to prevent imports or buggy postings from booking entries
+    | before the ledger was actually opened.
+    |
+    */
+    'historical_lower_bound' => env('LEDGER_HISTORICAL_LOWER_BOUND'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Recorder
+    |--------------------------------------------------------------------------
+    |
+    | Tunables for the TransactionRecorder. The defaults are appropriate for
+    | almost every workload; only adjust if you have measured a specific
+    | bottleneck.
+    |
+    |   max_attempts — deadlock-retry budget for a single Posting.
+    |
+    */
+    'recorder' => [
+        'max_attempts' => (int) env('LEDGER_RECORDER_MAX_ATTEMPTS', 3),
+    ],
+
 ];

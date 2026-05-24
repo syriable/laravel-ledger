@@ -179,6 +179,17 @@ $cash->balanceAsOf($moment);   // int — historical balance, from entries
 $cash->entries;                // immutable history
 ```
 
+When you iterate accounts and call `balance()` on each, use the `withBalance` scope to eager-load the projection and avoid an N+1:
+
+```php
+$accounts = Account::query()
+    ->withBalance()
+    ->where('ledger_id', $ledgerId)
+    ->get();
+
+$accounts->each(fn (Account $a) => $a->balance());  // zero extra queries
+```
+
 ### Owner-side ergonomics
 
 Apply the `HasAccounts` trait to any model that owns accounts:

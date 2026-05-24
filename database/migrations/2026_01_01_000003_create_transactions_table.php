@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -14,7 +15,19 @@ return new class extends Migration
         $ledgersTable = config('ledger.table_names.ledgers', 'ledgers');
 
         Schema::create($transactionsTable, function (Blueprint $table) use ($ledgersTable, $transactionsTable) {
-            $table->uuid('id')->primary();
+            // The PK is declared as an explicit command, NOT as
+            // $table->uuid('id')->primary(). On Postgres, Laravel's fluent
+            // ->primary() on a column queues the PRIMARY KEY constraint AFTER
+            // every foreignUuid() command, so the self-referencing FK on
+            // reverses_transaction_id below fires before id has a unique
+            // index — and Postgres rejects it with
+            //   ERROR: there is no unique constraint matching given keys for
+            //   referenced table "transactions"
+            // The explicit primary command queues earlier and is emitted
+            // first; behaviour on MySQL/SQLite is unchanged.
+            $table->uuid('id');
+            $table->primary('id');
+
             $table->foreignUuid('ledger_id')->constrained($ledgersTable)->restrictOnDelete();
             $table->string('reference');
             $table->string('posting_type');
@@ -48,6 +61,13 @@ return new class extends Migration
             $table->index(['ledger_id', 'posted_at']);
             $table->index('correlation_id');
         });
+
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            DB::statement("ALTER TABLE {$transactionsTable} ADD CONSTRAINT transactions_currency_format CHECK (currency ~ '^[A-Z]{3}$')");
+        } elseif ($driver === 'mysql' || $driver === 'mariadb') {
+            DB::statement("ALTER TABLE `{$transactionsTable}` ADD CONSTRAINT transactions_currency_format CHECK (currency REGEXP '^[A-Z]{3}$')");
+        }
     }
 
     public function down(): void

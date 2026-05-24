@@ -42,11 +42,17 @@ return new class extends Migration
             $table->index(['ledger_id', 'type', 'currency']);
         });
 
-        // CHECK constraints. We do this raw because Laravel's blueprint
-        // doesn't expose CHECK uniformly across drivers in older versions.
-        if (DB::getDriverName() === 'pgsql') {
+        // CHECK constraints. Laravel's blueprint does not expose CHECK
+        // portably, so we add them per-driver here. SQLite supports CHECK
+        // only at CREATE TABLE time and is covered by the PHP-level
+        // Money / Validator enforcement (see docs/03-invariants.md).
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
             DB::statement("ALTER TABLE {$accountsTable} ADD CONSTRAINT accounts_currency_format CHECK (currency ~ '^[A-Z]{3}$')");
             DB::statement("ALTER TABLE {$accountsTable} ADD CONSTRAINT accounts_type_valid CHECK (type IN ('asset','liability','equity','revenue','expense'))");
+        } elseif ($driver === 'mysql' || $driver === 'mariadb') {
+            DB::statement("ALTER TABLE `{$accountsTable}` ADD CONSTRAINT accounts_currency_format CHECK (currency REGEXP '^[A-Z]{3}$')");
+            DB::statement("ALTER TABLE `{$accountsTable}` ADD CONSTRAINT accounts_type_valid CHECK (type IN ('asset','liability','equity','revenue','expense'))");
         }
     }
 

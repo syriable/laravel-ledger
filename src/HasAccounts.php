@@ -24,6 +24,7 @@ use Syriable\Ledger\Models\Ledger as LedgerModel;
  */
 trait HasAccounts
 {
+    /** @return MorphMany<Account, $this> */
     public function accounts(): MorphMany
     {
         return $this->morphMany(Account::class, 'ownerable');

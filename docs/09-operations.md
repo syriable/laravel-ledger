@@ -126,6 +126,55 @@ The recorder's hot path is small. The four metrics worth watching:
 - **`balances` upsert latency** — the projection step. Often the bottleneck on hot accounts.
 - **`ledger:verify` runtime** — grows linearly with entries. If it climbs above a few minutes, partition `entries` by `posted_at` monthly.
 
+## Batch posting
+
+Use `Ledger::postMany(iterable<Posting>)` to record many Postings in a single DB transaction. Either all of them commit or none do, and the per-Posting transaction overhead disappears — important for legacy imports and high-throughput workers.
+
+```php
+$results = Ledger::postMany($postings);
+```
+
+Idempotency still applies per Posting: a Posting whose Reference already exists in the ledger returns `wasReplayed=true` and writes nothing. The deadlock-retry budget applies per Posting (as a savepoint inside the outer transaction).
+
+If you want per-Posting atomicity (failures shouldn't roll back the rest of the batch), call `Ledger::post()` in a loop instead.
+
+## Running under Octane / Swoole / RoadRunner
+
+The recorder-window safety net (`WritableOnlyByRecorder`) is fiber-aware. Each Fiber gets its own depth counter via a `WeakMap`, so coroutines under Swoole/RoadRunner cannot share open windows. Code running on the main fiber (the default for PHP-FPM and Octane's single-request workers) shares one stable per-class sentinel, which is exactly the behaviour you want for sequential requests.
+
+What this means in practice:
+
+- **PHP-FPM** — unchanged behaviour; every request is the main fiber.
+- **Octane (Swoole concurrent tasks, `Octane::concurrently(...)`)** — each task runs in its own Fiber and gets its own window. One task opening a recorder window will not let a parallel task `save()` a financial model.
+- **Octane / RoadRunner request workers** — sequential requests in a single worker. Windows opened by the recorder are always closed in a `finally`, so depth returns to 0 at the end of every request.
+- **Octane state-leak guarantee** — the package holds no other static mutable state that crosses requests.
+
+If you author your own code that calls `Model::openRecorderWindow()` directly (you generally should not), make sure every `open` is paired with a `close` in a `finally` block.
+
+## Idempotency retention
+
+References (the `transactions.reference` column) are **permanent**. The recorder never expires them and there is no TTL.
+
+What this means:
+
+- Posting the same `Reference` weeks or years after the original returns `wasReplayed=true` and writes nothing. This is the desired behaviour for genuinely repeated business events.
+- It is the wrong behaviour for systems that legitimately reuse event ids over long horizons. If your webhook provider intentionally reuses an `evt_…` id 90 days later for an unrelated event, scope the reference to include a time component (`Reference::for('stripe.event', $eventId, $year)`) so the two are distinct.
+- The `UNIQUE(ledger_id, reference)` index never shrinks; it grows linearly with the number of distinct business events you record. That growth is normal and benign — the index is small (UUID-bearing varchar) and well-clustered.
+
+If your environment must purge references for compliance reasons, do it at the row level (delete the entire transaction) — not the reference column. Editing a reference would silently make a prior reference re-postable.
+
+## 64-bit integer scaling assumptions
+
+The package targets PHP 8.3+, which on every supported platform runs as 64-bit. The financial columns rely on signed/unsigned 64-bit integers throughout:
+
+- `entries.amount` — `UNSIGNED BIGINT`, max ≈ 1.8 × 10^19 minor units per entry.
+- `balances.debit_total` / `credit_total` — `UNSIGNED BIGINT`, same headroom.
+- `balances.balance` — `BIGINT` (signed), max ≈ ±9.2 × 10^18 minor units.
+
+On a 32-bit PHP runtime, `(int) sum('amount')` would silently overflow into a float and your balance arithmetic would lose precision. **Do not run the package on 32-bit PHP.**
+
+For practical scale: at one billion (10^9) minor units of cumulative debits per day, the balance column lasts 25 million years before overflow. The accumulators are not a concern for any plausible workload, but high-volume sub-cent currencies (some crypto micro-denominations) should size their unit-of-account accordingly.
+
 ## Backups and restore
 
 Standard Laravel/Postgres/MySQL backup practices apply. There's nothing magic about ledger data — it's just immutable rows. A point-in-time restore brings the entire ledger back to a consistent moment, because every write is in a single DB transaction.

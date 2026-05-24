@@ -47,3 +47,20 @@ it('hydrates from a stored string', function (): void {
 
     expect((string) $reference)->toBe('order.paid:42');
 });
+
+it('rejects parts that contain a colon to prevent silent collisions', function (): void {
+    // Without this rejection, ('order.paid', '1:2') and ('order.paid', '1', '2')
+    // both render to "order.paid:1:2" and would silently share an idempotency
+    // slot.
+    Reference::for('order.paid', '1:2');
+})->throws(InvalidArgumentException::class);
+
+it('does not collide on parts that differ only by where the colons are', function (): void {
+    $a = Reference::for('order.paid', '1', '2');
+    expect((string) $a)->toBe('order.paid:1:2');
+
+    // The colon-bearing alternative is rejected; that asymmetry is what
+    // guarantees the rendered string maps back to one unique tuple.
+    expect(fn () => Reference::for('order.paid', '1:2'))
+        ->toThrow(InvalidArgumentException::class);
+});

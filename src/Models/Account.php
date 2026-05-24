@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Syriable\Ledger\Models;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -35,6 +36,8 @@ use Syriable\Ledger\ValueObjects\Money;
  * @property string|null $ownerable_id
  * @property string|null $parent_id
  * @property bool $is_archived
+ * @property CarbonImmutable|null $archived_at
+ * @property string|null $archived_by
  * @property array<string,mixed>|null $metadata
  */
 class Account extends Model
@@ -52,6 +55,7 @@ class Account extends Model
         'type' => AccountType::class,
         'normal_balance' => NormalBalance::class,
         'is_archived' => 'bool',
+        'archived_at' => 'immutable_datetime',
         'metadata' => 'array',
     ];
 
@@ -98,6 +102,25 @@ class Account extends Model
     public function balanceProjection(): HasOne
     {
         return $this->hasOne(Balance::class);
+    }
+
+    /**
+     * Eager-load the balance projection. Use this whenever you intend to
+     * call balance() / balanceMoney() on more than one account in the same
+     * code path — without it, each call lazy-loads its projection and the
+     * caller hits the classic N+1 query pattern.
+     *
+     *   Account::query()
+     *       ->withBalance()
+     *       ->where('ledger_id', $ledger->id)
+     *       ->get()
+     *       ->each(fn (Account $a) => $a->balance());
+     *
+     * @param  Builder<Account>  $query
+     */
+    public function scopeWithBalance(Builder $query): void
+    {
+        $query->with('balanceProjection');
     }
 
     /**

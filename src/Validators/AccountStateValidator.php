@@ -7,7 +7,7 @@ namespace Syriable\Ledger\Validators;
 use Illuminate\Support\Collection;
 use Syriable\Ledger\Data\TransactionDraft;
 use Syriable\Ledger\Exceptions\AccountArchivedException;
-use Syriable\Ledger\Exceptions\AccountNotFoundException;
+use Syriable\Ledger\Models\Account;
 
 /**
  * Archived accounts reject new entries — but retain history.
@@ -27,11 +27,8 @@ final class AccountStateValidator implements TransactionValidator
         }
 
         foreach ($draft->entries as $entry) {
+            /** @var Account $account Recorder guarantees presence; see TransactionValidator docblock. */
             $account = $accounts->get($entry->accountId);
-
-            if ($account === null) {
-                throw AccountNotFoundException::ids([$entry->accountId]);
-            }
 
             if ($account->is_archived) {
                 throw AccountArchivedException::on($account->id);

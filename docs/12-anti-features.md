@@ -38,7 +38,22 @@ Use a recurring scheduler in your app that posts new Postings on cadence. The co
 
 ## Period closing, fiscal year locks
 
-Real requirement for any serious business. Will land as `laravel-ledger-closing`. Not core in v1.
+Real requirement for any serious business — and intentionally out of scope for core.
+
+What "closing the books" requires (none of which the core provides):
+
+- a `periods` table tracking opening/closing balances per account and a status (open/closed/locked),
+- an enforcement layer that refuses any Posting whose `posted_at` falls inside a closed period,
+- adjusting-entry workflow for legitimate retroactive corrections,
+- a closing report (Trial Balance, P&L, Balance Sheet) generated from the snapshot.
+
+This is a substantial feature surface that belongs in `laravel-ledger-closing`. Until that ships, applications that need a basic close can:
+
+1. Configure `ledger.historical_lower_bound` so retroactive Postings are refused below a moving floor (see [Invariants](03-invariants.md)).
+2. Snapshot `balanceAsOf($closingMoment)` into an application-owned `period_closures` table at month-end.
+3. Run `ledger:verify` after each close so any drift is caught immediately.
+
+Core's job is to keep the journal trustworthy. Higher-level fiscal-period concerns layer on top.
 
 ## Multi-ledger transactions
 

@@ -33,9 +33,17 @@ return new class extends Migration
             $table->index(['ledger_id', 'posted_at']);
         });
 
-        if (DB::getDriverName() === 'pgsql') {
+        // CHECK constraints. SQLite supports CHECK only at CREATE TABLE
+        // time and is covered by the PHP-level Validator enforcement.
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
             DB::statement("ALTER TABLE {$entriesTable} ADD CONSTRAINT entries_amount_positive CHECK (amount > 0)");
             DB::statement("ALTER TABLE {$entriesTable} ADD CONSTRAINT entries_direction_valid CHECK (direction IN ('debit','credit'))");
+            DB::statement("ALTER TABLE {$entriesTable} ADD CONSTRAINT entries_currency_format CHECK (currency ~ '^[A-Z]{3}$')");
+        } elseif ($driver === 'mysql' || $driver === 'mariadb') {
+            DB::statement("ALTER TABLE `{$entriesTable}` ADD CONSTRAINT entries_amount_positive CHECK (amount > 0)");
+            DB::statement("ALTER TABLE `{$entriesTable}` ADD CONSTRAINT entries_direction_valid CHECK (direction IN ('debit','credit'))");
+            DB::statement("ALTER TABLE `{$entriesTable}` ADD CONSTRAINT entries_currency_format CHECK (currency REGEXP '^[A-Z]{3}$')");
         }
     }
 

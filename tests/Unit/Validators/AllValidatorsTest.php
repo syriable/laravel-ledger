@@ -10,7 +10,6 @@ use Syriable\Ledger\Enums\AccountType;
 use Syriable\Ledger\Enums\EntryDirection;
 use Syriable\Ledger\Exceptions\AccountArchivedException;
 use Syriable\Ledger\Exceptions\AccountCurrencyMismatchException;
-use Syriable\Ledger\Exceptions\AccountNotFoundException;
 use Syriable\Ledger\Exceptions\ImbalancedTransactionException;
 use Syriable\Ledger\Exceptions\LedgerScopeViolationException;
 use Syriable\Ledger\Exceptions\MinimumEntriesNotMetException;
@@ -118,15 +117,10 @@ it('LedgerScopeValidator rejects accounts from a foreign ledger', function (): v
     (new LedgerScopeValidator)->validate($draft, $accounts);
 })->throws(LedgerScopeViolationException::class);
 
-it('LedgerScopeValidator rejects unknown accounts', function (): void {
-    $accounts = new Collection;
-    $draft = fakeDraft([
-        new EntryDraft('missing', EntryDirection::Debit, Money::of(100, 'USD')),
-        new EntryDraft('also-missing', EntryDirection::Credit, Money::of(100, 'USD')),
-    ]);
-
-    (new LedgerScopeValidator)->validate($draft, $accounts);
-})->throws(AccountNotFoundException::class);
+// Missing-account is the recorder's responsibility, not the validators' —
+// see TransactionValidator's docblock. The earlier "validator rejects
+// unknown accounts" test was removed when validators stopped double-checking
+// the recorder's precondition.
 
 // AccountCurrencyMatch
 it('AccountCurrencyMatchValidator rejects entries whose currency differs from the account', function (): void {

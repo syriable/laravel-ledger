@@ -48,6 +48,19 @@ final readonly class Reference
             if (trim($part) === '') {
                 throw new InvalidArgumentException("Reference parts must not be empty for scope '{$scope}'.");
             }
+
+            // Colons are the part separator. Allowing them inside a part
+            // would silently let two different (scope, parts) tuples collide
+            // on the same reference string, defeating idempotency.
+            // Example: ('order.paid', '1:2') and ('order.paid', '1', '2')
+            // would both produce "order.paid:1:2" without this check.
+            if (str_contains($part, ':')) {
+                throw new InvalidArgumentException(
+                    "Reference parts must not contain a colon (got '{$part}' in scope '{$scope}'); ".
+                    'use additional positional parts instead.'
+                );
+            }
+
             $cleaned[] = $part;
         }
 

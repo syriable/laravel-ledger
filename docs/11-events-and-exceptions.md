@@ -89,6 +89,24 @@ Event::listen(function (TransactionPosted $event): void {
 
 This keeps each recorder transaction tight and independently recoverable.
 
+### Listeners must implement `ShouldQueue`
+
+`TransactionPosted` and `TransactionReversed` are dispatched via `DB::afterCommit()` and run **synchronously** on the recorder's caller thread. That means a listener that throws — for any reason, including a transient API call, a missing dependency, or a deserialisation error — will propagate the exception back up through `Ledger::post()` **after the financial write has already succeeded**. Callers typically interpret that as a write failure and retry the Posting; the second call returns `wasReplayed=true` (idempotency works), but the retry loop hides the actual bug forever.
+
+The safe default is:
+
+```php
+final class ReindexAfterPosting implements ShouldQueue
+{
+    public function handle(TransactionPosted $event): void
+    {
+        // search index update, notification, projection, …
+    }
+}
+```
+
+With `ShouldQueue`, the listener is enqueued (not executed) on commit; a failure inside the worker is observable, retryable, and dead-letterable through the normal queue infrastructure. **Reserve synchronous listeners for code that genuinely cannot fail** (e.g. an in-memory log line). Anything else: queue it.
+
 ## Exceptions
 
 Every exception the package throws extends `Syriable\Ledger\Exceptions\LedgerException`, which extends `\RuntimeException`. You can catch all package errors with a single `catch (LedgerException $e)`, or catch specific types.

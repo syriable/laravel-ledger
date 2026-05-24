@@ -119,7 +119,23 @@ it('reversal restores the prior balances', function (): void {
 
 ### Freeze time with a fixed Clock
 
-The package reads "now" only through the `Clock` contract. Bind a fixed clock so `recorded_at` and default `posted_at` are deterministic:
+The package reads "now" only through the `Clock` contract. Two equally valid strategies:
+
+**1. `Carbon::setTestNow()` (simplest).** The default `SystemClock` returns `CarbonImmutable::now()`, which honours Carbon's global test override. This freezes every package timestamp — `recorded_at`, default `posted_at`, `archived_at` — without binding a custom service:
+
+```php
+use Carbon\CarbonImmutable;
+
+beforeEach(function (): void {
+    CarbonImmutable::setTestNow('2026-01-01 12:00:00');
+});
+
+afterEach(function (): void {
+    CarbonImmutable::setTestNow(); // reset so other tests aren't affected
+});
+```
+
+**2. Bind a custom `Clock` (deterministic, Carbon-free).** Use this when you want a monotonic counter or any non-Carbon time source:
 
 ```php
 use Syriable\Ledger\Recording\Clock;

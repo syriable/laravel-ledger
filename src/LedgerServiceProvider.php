@@ -23,6 +23,7 @@ use Syriable\Ledger\Validators\BalancedTransactionValidator;
 use Syriable\Ledger\Validators\LedgerScopeValidator;
 use Syriable\Ledger\Validators\MinimumEntriesValidator;
 use Syriable\Ledger\Validators\PositiveAmountValidator;
+use Syriable\Ledger\Validators\PostedAtBoundsValidator;
 use Syriable\Ledger\Validators\SingleCurrencyValidator;
 use Syriable\Ledger\Validators\TransactionValidator;
 use Syriable\Ledger\Validators\ValidatorPipeline;
@@ -42,6 +43,7 @@ final class LedgerServiceProvider extends ServiceProvider
         LedgerScopeValidator::class,
         AccountCurrencyMatchValidator::class,
         AccountStateValidator::class,
+        PostedAtBoundsValidator::class,
         BalancedTransactionValidator::class,
     ];
 

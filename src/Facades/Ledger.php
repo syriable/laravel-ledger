@@ -21,8 +21,9 @@ use Syriable\Ledger\Postings\Posting;
  * @method static LedgerModel createLedger(string $slug, string $currency, ?string $name = null, ?string $tenantId = null, array<string,mixed> $metadata = [])
  * @method static LedgerScope for(string $slug)
  * @method static Account openAccount(LedgerModel $ledger, string $code, AccountType $type, string $currency, ?string $name = null, ?Model $owner = null, array<string,mixed> $metadata = [])
- * @method static Account archiveAccount(Account $account)
+ * @method static Account archiveAccount(Account $account, ?string $actor = null)
  * @method static PostingResult post(Posting $posting)
+ * @method static list<PostingResult> postMany(iterable<Posting> $postings)
  * @method static PostingResult reverse(Transaction $original, ?string $reason = null)
  *
  * @see LedgerManager
