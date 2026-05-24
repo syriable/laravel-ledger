@@ -65,6 +65,11 @@ final class ReversalPosting extends Posting
         return $this->reason !== null ? "{$base}: {$this->reason}" : $base;
     }
 
+    public function type(): string
+    {
+        return 'ledger.reversal';
+    }
+
     public function correlationId(): ?string
     {
         return $this->original->correlation_id;

@@ -40,6 +40,15 @@ final class {{ class }} extends Posting
         return Reference::for('domain.event', 'replace-me');
     }
 
+    /**
+     * Stable, refactor-proof token persisted in transactions.posting_type.
+     * Keep it aligned with the Reference scope above. Never change once chosen.
+     */
+    public function type(): string
+    {
+        return 'domain.event';
+    }
+
     public function currency(): string
     {
         return 'USD';
