@@ -2,16 +2,18 @@
 
 All notable changes to `laravel-ledger` will be documented in this file.
 
-## Unreleased# Changelog
-
-All notable changes to `laravel-ledger` will be documented in this file.
-
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-A production-hardening pass focused on correctness, concurrency, and operational scalability. The public API is unchanged in shape; existing code keeps working.
+_Nothing yet._
+
+## 1.0.0-rc.1 - 2026-05-24
+
+First release candidate on the road to 1.0.0. This is a production-hardening release: every change since 0.9.0 strengthens correctness, concurrency safety, scalability, or operational tooling without altering the three-verb public API. **Existing 0.9.x code continues to work** — see [UPGRADING.md](UPGRADING.md) for the small list of opt-in adjustments.
+
+`1.0.0-rc.1` enters a soak period. The API will not change before `1.0.0` unless a critical bug demands it.
 
 ### Added
 

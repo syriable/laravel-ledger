@@ -194,7 +194,7 @@ $user->accounts;                           // all of this model's accounts
 
 ## Configuration
 
-The published `config/ledger.php`:
+The published `config/ledger.php` (defaults shown):
 
 ```php
 return [
@@ -212,10 +212,24 @@ return [
         'balances' => 'balances',
     ],
 
-    // Extra validators, appended AFTER the seven required ones.
+    // Extra validators, appended AFTER the eight required ones.
     // Required validators always run first and cannot be removed.
     'validators' => [
         // \App\Ledger\Validators\AmountCeilingValidator::class,
+    ],
+
+    // Maximum future skew tolerated on a Posting's posted_at, in seconds.
+    // Protects every balanceAsOf() query from clock-skew or buggy backdating.
+    // Set 0 to forbid any future-dated postings.
+    'max_clock_skew_seconds' => env('LEDGER_MAX_CLOCK_SKEW_SECONDS', 300),
+
+    // Optional inclusive lower bound for posted_at. Accepts null, an
+    // ISO-8601 string, or a callable returning a DateTimeInterface.
+    'historical_lower_bound' => env('LEDGER_HISTORICAL_LOWER_BOUND'),
+
+    // TransactionRecorder tunables. Defaults suit almost every workload.
+    'recorder' => [
+        'max_attempts' => (int) env('LEDGER_RECORDER_MAX_ATTEMPTS', 3),
     ],
 
 ];
@@ -226,6 +240,9 @@ return [
 | `default_ledger_slug` | `?string` | Ledger slug resolved by `HasAccounts` when none is passed. |
 | `table_names.*` | `string` | Per-table name overrides. Rarely needed. |
 | `validators` | `array<class-string>` | Additional `TransactionValidator`s, run after the required set. See [`10-extensions.md`](10-extensions.md). |
+| `max_clock_skew_seconds` | `int` | Max seconds a Posting's `posted_at` may be in the future. Default `300`. |
+| `historical_lower_bound` | `null\|string\|callable` | Optional floor on `posted_at`. Prevents backdating below a known point. |
+| `recorder.max_attempts` | `int` | Deadlock-retry budget for a single Posting. Default `3`. |
 
 ## Next steps
 
