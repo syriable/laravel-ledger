@@ -49,7 +49,7 @@ use Throwable;
  */
 final class TransactionRecorder
 {
-    private const MAX_ATTEMPTS = 3;
+    private const DEFAULT_MAX_ATTEMPTS = 3;
 
     public function __construct(
         private readonly ValidatorPipeline $validators,
@@ -57,6 +57,14 @@ final class TransactionRecorder
         private readonly IdempotencyStore $idempotencyStore,
         private readonly Clock $clock,
     ) {}
+
+    private function maxAttempts(): int
+    {
+        $value = config('ledger.recorder.max_attempts', self::DEFAULT_MAX_ATTEMPTS);
+        $attempts = is_numeric($value) ? (int) $value : self::DEFAULT_MAX_ATTEMPTS;
+
+        return $attempts >= 1 ? $attempts : 1;
+    }
 
     public function record(TransactionDraft $draft): PostingResult
     {
@@ -68,10 +76,11 @@ final class TransactionRecorder
 
         // 2. Persist atomically with deadlock retries. The draft is captured by
         //    closure once; retries operate on the same frozen snapshot.
+        $attempts = $this->maxAttempts();
         try {
             $transaction = DB::transaction(
                 fn () => $this->writeAtomically($draft),
-                self::MAX_ATTEMPTS,
+                $attempts,
             );
         } catch (UniqueConstraintViolationException $e) {
             // Racing concurrent insert under the same reference, or under
@@ -84,12 +93,12 @@ final class TransactionRecorder
             }
 
             // Deadlock budget exhausted or some other terminal DB failure
-            // surfaced through DB::transaction(...) after MAX_ATTEMPTS.
+            // surfaced through DB::transaction(...) after maxAttempts().
             if ($this->isDeadlockOrLockTimeout($e)) {
                 throw LedgerWriteFailedException::afterRetries(
                     $draft->ledgerId,
                     (string) $draft->reference,
-                    self::MAX_ATTEMPTS,
+                    $attempts,
                     $e,
                 );
             }

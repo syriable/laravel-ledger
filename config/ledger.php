@@ -83,4 +83,20 @@ return [
     */
     'historical_lower_bound' => env('LEDGER_HISTORICAL_LOWER_BOUND'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Recorder
+    |--------------------------------------------------------------------------
+    |
+    | Tunables for the TransactionRecorder. The defaults are appropriate for
+    | almost every workload; only adjust if you have measured a specific
+    | bottleneck.
+    |
+    |   max_attempts — deadlock-retry budget for a single Posting.
+    |
+    */
+    'recorder' => [
+        'max_attempts' => (int) env('LEDGER_RECORDER_MAX_ATTEMPTS', 3),
+    ],
+
 ];
