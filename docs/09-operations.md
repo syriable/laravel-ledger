@@ -126,6 +126,18 @@ The recorder's hot path is small. The four metrics worth watching:
 - **`balances` upsert latency** — the projection step. Often the bottleneck on hot accounts.
 - **`ledger:verify` runtime** — grows linearly with entries. If it climbs above a few minutes, partition `entries` by `posted_at` monthly.
 
+## Batch posting
+
+Use `Ledger::postMany(iterable<Posting>)` to record many Postings in a single DB transaction. Either all of them commit or none do, and the per-Posting transaction overhead disappears — important for legacy imports and high-throughput workers.
+
+```php
+$results = Ledger::postMany($postings);
+```
+
+Idempotency still applies per Posting: a Posting whose Reference already exists in the ledger returns `wasReplayed=true` and writes nothing. The deadlock-retry budget applies per Posting (as a savepoint inside the outer transaction).
+
+If you want per-Posting atomicity (failures shouldn't roll back the rest of the batch), call `Ledger::post()` in a loop instead.
+
 ## Running under Octane / Swoole / RoadRunner
 
 The recorder-window safety net (`WritableOnlyByRecorder`) is fiber-aware. Each Fiber gets its own depth counter via a `WeakMap`, so coroutines under Swoole/RoadRunner cannot share open windows. Code running on the main fiber (the default for PHP-FPM and Octane's single-request workers) shares one stable per-class sentinel, which is exactly the behaviour you want for sequential requests.

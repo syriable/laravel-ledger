@@ -6,6 +6,7 @@ namespace Syriable\Ledger;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Syriable\Ledger\Data\PostingResult;
 use Syriable\Ledger\Enums\AccountType;
@@ -207,6 +208,34 @@ final class LedgerManager
         $draft = $posting->toDraft($ledger->id, $this->clock);
 
         return $this->recorder->record($draft);
+    }
+
+    /**
+     * Post many Postings atomically inside a single DB transaction.
+     *
+     * Either all postings commit, or none do. Useful for bulk legacy
+     * imports and high-throughput workers that would otherwise pay a
+     * per-posting transaction round-trip.
+     *
+     * Idempotency still applies per Posting: replays inside the batch
+     * return wasReplayed=true and write nothing. The recorder's own
+     * deadlock-retry budget applies per Posting (as a savepoint inside
+     * the outer transaction).
+     *
+     * @param  iterable<Posting>  $postings
+     * @return list<PostingResult>
+     */
+    public function postMany(iterable $postings): array
+    {
+        $results = [];
+
+        DB::transaction(function () use ($postings, &$results): void {
+            foreach ($postings as $posting) {
+                $results[] = $this->post($posting);
+            }
+        });
+
+        return $results;
     }
 
     /**
