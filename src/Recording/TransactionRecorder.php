@@ -113,11 +113,19 @@ final class TransactionRecorder
             );
         }
 
-        // 3. After-commit, exactly-once event dispatch.
-        DB::afterCommit(function () use ($transaction): void {
-            if ($transaction->isReversal()) {
-                /** @var Transaction $original */
-                $original = $transaction->reversesTransaction()->firstOrFail();
+        // 3. After-commit, exactly-once event dispatch. For reversals we
+        //    resolve the original transaction inside the still-open DB
+        //    transaction so the afterCommit callback does not have to
+        //    re-query — a post-commit DB blip would otherwise raise after
+        //    a successful write.
+        $original = null;
+        if ($transaction->isReversal()) {
+            /** @var Transaction $original */
+            $original = $transaction->reversesTransaction()->firstOrFail();
+        }
+
+        DB::afterCommit(function () use ($transaction, $original): void {
+            if ($original !== null) {
                 event(new TransactionReversed($transaction, $original));
             } else {
                 event(new TransactionPosted($transaction));
