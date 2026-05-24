@@ -58,12 +58,15 @@ final class TransactionRecorder
         private readonly Clock $clock,
     ) {}
 
+    /**
+     * @return int<1, max>
+     */
     private function maxAttempts(): int
     {
         $value = config('ledger.recorder.max_attempts', self::DEFAULT_MAX_ATTEMPTS);
         $attempts = is_numeric($value) ? (int) $value : self::DEFAULT_MAX_ATTEMPTS;
 
-        return $attempts >= 1 ? $attempts : 1;
+        return max(1, $attempts);
     }
 
     public function record(TransactionDraft $draft): PostingResult
