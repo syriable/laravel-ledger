@@ -15,6 +15,8 @@ use Syriable\Ledger\Events\TransactionPosted;
 use Syriable\Ledger\Events\TransactionReversed;
 use Syriable\Ledger\Exceptions\AccountNotFoundException;
 use Syriable\Ledger\Exceptions\DuplicateReferenceException;
+use Syriable\Ledger\Exceptions\LedgerException;
+use Syriable\Ledger\Exceptions\LedgerWriteFailedException;
 use Syriable\Ledger\Exceptions\ReversalNotAllowedException;
 use Syriable\Ledger\Models\Account;
 use Syriable\Ledger\Models\Entry;
@@ -80,7 +82,35 @@ final class TransactionRecorder
             if ($this->isUniqueViolation($e)) {
                 return $this->resolveConstraintViolation($draft, $e);
             }
+
+            // Deadlock budget exhausted or some other terminal DB failure
+            // surfaced through DB::transaction(...) after MAX_ATTEMPTS.
+            if ($this->isDeadlockOrLockTimeout($e)) {
+                throw LedgerWriteFailedException::afterRetries(
+                    $draft->ledgerId,
+                    (string) $draft->reference,
+                    self::MAX_ATTEMPTS,
+                    $e,
+                );
+            }
+
+            throw LedgerWriteFailedException::unexpected(
+                $draft->ledgerId,
+                (string) $draft->reference,
+                $e,
+            );
+        } catch (LedgerException $e) {
+            // Validators, account-not-found, etc. — already package-typed.
             throw $e;
+        } catch (Throwable $e) {
+            // Anything else that escaped DB::transaction() (e.g. driver
+            // RuntimeExceptions, transient I/O) is wrapped so consumers can
+            // catch LedgerException for all package-level write failures.
+            throw LedgerWriteFailedException::unexpected(
+                $draft->ledgerId,
+                (string) $draft->reference,
+                $e,
+            );
         }
 
         // 3. After-commit, exactly-once event dispatch.
@@ -234,5 +264,19 @@ final class TransactionRecorder
         $sqlState = $e->errorInfo[0] ?? null;
 
         return $sqlState === '23000' || $sqlState === '23505';
+    }
+
+    private function isDeadlockOrLockTimeout(QueryException $e): bool
+    {
+        // SQLSTATE 40001 (serialization failure) / 40P01 (Postgres deadlock)
+        // / 1213 (MySQL deadlock) / 1205 (MySQL lock wait timeout).
+        $sqlState = $e->errorInfo[0] ?? null;
+        $driverCode = $e->errorInfo[1] ?? null;
+
+        if ($sqlState === '40001' || $sqlState === '40P01') {
+            return true;
+        }
+
+        return $driverCode === 1213 || $driverCode === 1205;
     }
 }
