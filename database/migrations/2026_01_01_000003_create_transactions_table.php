@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -48,6 +49,13 @@ return new class extends Migration
             $table->index(['ledger_id', 'posted_at']);
             $table->index('correlation_id');
         });
+
+        $driver = DB::getDriverName();
+        if ($driver === 'pgsql') {
+            DB::statement("ALTER TABLE {$transactionsTable} ADD CONSTRAINT transactions_currency_format CHECK (currency ~ '^[A-Z]{3}$')");
+        } elseif ($driver === 'mysql' || $driver === 'mariadb') {
+            DB::statement("ALTER TABLE `{$transactionsTable}` ADD CONSTRAINT transactions_currency_format CHECK (currency REGEXP '^[A-Z]{3}$')");
+        }
     }
 
     public function down(): void
