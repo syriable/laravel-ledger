@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Syriable\Ledger\Recording;
 
-use Illuminate\Database\Query\Expression;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Syriable\Ledger\Enums\EntryDirection;
@@ -76,28 +75,40 @@ final class DatabaseBalanceProjector implements BalanceProjector
         int $signedDelta,
     ): void {
         $table = (new Balance)->getTable();
-        $now = $this->clock->now();
+        $now = $this->clock->now()->format('Y-m-d H:i:s.u');
 
-        // Atomic UPSERT: insert-or-increment.
-        DB::table($table)->upsert(
-            [[
-                'account_id' => $accountId,
-                'currency' => $currency,
-                'debit_total' => $debitDelta,
-                'credit_total' => $creditDelta,
-                'balance' => $signedDelta,
-                'version' => 1,
-                'updated_at' => $now,
-            ]],
-            ['account_id'],
-            // On conflict, increment using SQL expressions to preserve atomicity.
-            [
-                'debit_total' => new Expression("debit_total + {$debitDelta}"),
-                'credit_total' => new Expression("credit_total + {$creditDelta}"),
-                'balance' => new Expression("balance + ({$signedDelta})"),
-                'version' => new Expression('version + 1'),
-                'updated_at' => $now,
-            ],
+        // Increment the existing projection row via fully bound parameters.
+        // We could have used Laravel's upsert() with raw Expressions, but
+        // that requires interpolating the deltas into SQL fragments. The
+        // recorder already holds SELECT … FOR UPDATE on the account, so
+        // concurrent postings on the same account serialise behind that
+        // lock — splitting into UPDATE-then-INSERT here is race-safe.
+        $affected = DB::update(
+            "UPDATE {$table} SET ".
+            'debit_total = debit_total + ?, '.
+            'credit_total = credit_total + ?, '.
+            'balance = balance + ?, '.
+            'version = version + 1, '.
+            'updated_at = ? '.
+            'WHERE account_id = ?',
+            [$debitDelta, $creditDelta, $signedDelta, $now, $accountId],
         );
+
+        if ($affected > 0) {
+            return;
+        }
+
+        // No existing row — first posting against this account. Insert the
+        // initial projection. The FOR UPDATE on the account row makes this
+        // safe against concurrent inserts.
+        DB::table($table)->insert([
+            'account_id' => $accountId,
+            'currency' => $currency,
+            'debit_total' => $debitDelta,
+            'credit_total' => $creditDelta,
+            'balance' => $signedDelta,
+            'version' => 1,
+            'updated_at' => $now,
+        ]);
     }
 }
