@@ -126,6 +126,19 @@ The recorder's hot path is small. The four metrics worth watching:
 - **`balances` upsert latency** — the projection step. Often the bottleneck on hot accounts.
 - **`ledger:verify` runtime** — grows linearly with entries. If it climbs above a few minutes, partition `entries` by `posted_at` monthly.
 
+## Running under Octane / Swoole / RoadRunner
+
+The recorder-window safety net (`WritableOnlyByRecorder`) is fiber-aware. Each Fiber gets its own depth counter via a `WeakMap`, so coroutines under Swoole/RoadRunner cannot share open windows. Code running on the main fiber (the default for PHP-FPM and Octane's single-request workers) shares one stable per-class sentinel, which is exactly the behaviour you want for sequential requests.
+
+What this means in practice:
+
+- **PHP-FPM** — unchanged behaviour; every request is the main fiber.
+- **Octane (Swoole concurrent tasks, `Octane::concurrently(...)`)** — each task runs in its own Fiber and gets its own window. One task opening a recorder window will not let a parallel task `save()` a financial model.
+- **Octane / RoadRunner request workers** — sequential requests in a single worker. Windows opened by the recorder are always closed in a `finally`, so depth returns to 0 at the end of every request.
+- **Octane state-leak guarantee** — the package holds no other static mutable state that crosses requests.
+
+If you author your own code that calls `Model::openRecorderWindow()` directly (you generally should not), make sure every `open` is paired with a `close` in a `finally` block.
+
 ## Backups and restore
 
 Standard Laravel/Postgres/MySQL backup practices apply. There's nothing magic about ledger data — it's just immutable rows. A point-in-time restore brings the entire ledger back to a consistent moment, because every write is in a single DB transaction.
