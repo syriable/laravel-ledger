@@ -35,6 +35,8 @@ use Syriable\Ledger\ValueObjects\Money;
  * @property string|null $ownerable_id
  * @property string|null $parent_id
  * @property bool $is_archived
+ * @property CarbonImmutable|null $archived_at
+ * @property string|null $archived_by
  * @property array<string,mixed>|null $metadata
  */
 class Account extends Model
@@ -52,6 +54,7 @@ class Account extends Model
         'type' => AccountType::class,
         'normal_balance' => NormalBalance::class,
         'is_archived' => 'bool',
+        'archived_at' => 'immutable_datetime',
         'metadata' => 'array',
     ];
 

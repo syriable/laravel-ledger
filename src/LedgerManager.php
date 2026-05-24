@@ -172,8 +172,12 @@ final class LedgerManager
     /**
      * Archive an account. Archived accounts retain history but reject new
      * non-reversal entries.
+     *
+     * Captures an audit trail (archived_at, archived_by). The actor token
+     * is intentionally free-form — pass a user id, a system actor string,
+     * or null. The package stores whatever the caller provides.
      */
-    public function archiveAccount(Account $account): Account
+    public function archiveAccount(Account $account, ?string $actor = null): Account
     {
         if ($account->is_archived) {
             return $account;
@@ -182,6 +186,8 @@ final class LedgerManager
         Account::openRecorderWindow();
         try {
             $account->is_archived = true;
+            $account->archived_at = $this->clock->now();
+            $account->archived_by = $actor;
             $account->save();
         } finally {
             Account::closeRecorderWindow();
