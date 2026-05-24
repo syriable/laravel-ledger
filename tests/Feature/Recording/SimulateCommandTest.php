@@ -63,3 +63,42 @@ it('exercises idempotency replays during the run', function (): void {
     expect($output)->toContain('passed every integrity check')
         ->and($output)->not->toContain('Idempotency FAILED');
 });
+
+it('refuses to run twice against a non-empty ledger without --force (issue #8)', function (): void {
+    // First run on a fresh slug — should succeed.
+    $firstExit = Artisan::call('ledger:simulate', [
+        '--sellers' => 2,
+        '--orders' => 20,
+        '--ledger' => 'sim-issue-8',
+        '--seed' => 7,
+    ]);
+    expect($firstExit)->toBe(0);
+
+    $countAfterFirst = Transaction::query()
+        ->whereHas('ledger', fn ($q) => $q->where('slug', 'sim-issue-8'))
+        ->count();
+    expect($countAfterFirst)->toBeGreaterThan(0);
+
+    // Second run on the same slug — must fail fast with a clear message
+    // instead of corrupting the shadow and crashing on a re-reversed
+    // transaction.
+    $secondExit = Artisan::call('ledger:simulate', [
+        '--sellers' => 2,
+        '--orders' => 20,
+        '--ledger' => 'sim-issue-8',
+        '--seed' => 7,
+    ]);
+
+    expect($secondExit)->not->toBe(0);
+
+    $output = Artisan::output();
+    expect($output)->toContain('already contains transactions')
+        ->and($output)->toContain('migrate:fresh');
+
+    // Critically, the second run must NOT have written anything new — the
+    // pre-flight check fires before bootstrap.
+    $countAfterRefusal = Transaction::query()
+        ->whereHas('ledger', fn ($q) => $q->where('slug', 'sim-issue-8'))
+        ->count();
+    expect($countAfterRefusal)->toBe($countAfterFirst);
+});

@@ -13,6 +13,7 @@ use Syriable\Ledger\Enums\EntryDirection;
 use Syriable\Ledger\Facades\Ledger;
 use Syriable\Ledger\Models\Account;
 use Syriable\Ledger\Models\Entry;
+use Syriable\Ledger\Models\Ledger as LedgerModel;
 use Syriable\Ledger\Models\Transaction;
 use Syriable\Ledger\Postings\Posting;
 use Syriable\Ledger\Simulation\Postings\SimOrderCompletedPosting;
@@ -49,7 +50,8 @@ final class SimulateCommand extends Command
         {--refund-rate=8 : Percent of completed orders that get a partial refund}
         {--reversal-rate=3 : Percent of paid orders reversed (treated as a mistake)}
         {--payout-rate=60 : Percent of sellers that request a payout at the end}
-        {--replay-rate=5 : Percent of postings deliberately re-posted to test idempotency}';
+        {--replay-rate=5 : Percent of postings deliberately re-posted to test idempotency}
+        {--force : Run even if the target ledger already has transactions (NOT recommended)}';
 
     protected $description = 'Run a realistic marketplace simulation and verify ledger integrity at volume';
 
@@ -81,6 +83,16 @@ final class SimulateCommand extends Command
         $this->rng = new Randomizer(new Mt19937($seed));
 
         $this->components->info("Ledger simulation — {$sellersCount} sellers, {$ordersCount} orders, seed {$seed}");
+
+        // Refuse to run on a non-empty ledger. Idempotent references would
+        // make every posting on the second run report wasReplayed=true; the
+        // shadow would drift out of sync with the projection within seconds
+        // and the random-reversal branch would attempt to reverse a
+        // transaction that was already reversed in the prior run (issue #8).
+        if (! $this->preflightLedgerIsEmpty($ledgerSlug)) {
+            return self::FAILURE;
+        }
+
         $this->shadow = new ShadowLedger;
 
         $startedAt = microtime(true);
@@ -106,6 +118,48 @@ final class SimulateCommand extends Command
         $this->components->info('Simulation passed every integrity check.');
 
         return self::SUCCESS;
+    }
+
+    private function preflightLedgerIsEmpty(string $ledgerSlug): bool
+    {
+        if ((bool) $this->option('force')) {
+            return true;
+        }
+
+        // If a ledger with this slug already exists, refuse unless it has no
+        // transactions. The simulator uses deterministic, idempotent
+        // references and a fixed RNG seed; running again over the prior
+        // run's rows would either succeed silently with a corrupt shadow
+        // or crash on the random reversal of an already-reversed
+        // transaction (issue #8).
+        $ledger = LedgerModel::query()
+            ->where('slug', $ledgerSlug)
+            ->first();
+
+        if ($ledger === null) {
+            return true;
+        }
+
+        $existingTransactions = Transaction::query()
+            ->where('ledger_id', $ledger->id)
+            ->limit(1)
+            ->exists();
+
+        if (! $existingTransactions) {
+            return true;
+        }
+
+        $this->components->error(
+            "Ledger '{$ledgerSlug}' already contains transactions. The simulator ".
+            'uses deterministic references and would replay them on a re-run; '.
+            'the shadow check would drift and the random reversal branch '.
+            "would crash on a re-reversed transaction.\n\n".
+            'Run `php artisan migrate:fresh` (against your scratch database, '.
+            'never production), or pass --ledger=<another-slug>, or --force '.
+            'if you really know what you are doing.'
+        );
+
+        return false;
     }
 
     private function bootstrapLedger(string $slug, string $currency, int $sellersCount): void
@@ -168,9 +222,23 @@ final class SimulateCommand extends Command
 
             $paid = $this->postOrderPaid($slug, $currency, $orderId, $seller, $total, $sellerNet, $commission);
 
+            // If the paid posting was an unexpected replay (the prior run's
+            // row still in the DB), do NOT cascade into reverse/complete/refund
+            // for this order. The prior run already picked its branches; doing
+            // it again would either double-book the shadow or hit
+            // ReversalNotAllowedException on the random reversal roll
+            // (issue #8). The pre-flight check above normally prevents this,
+            // but this defence keeps the rest of the run consistent if it
+            // somehow leaks through (e.g. --force).
+            if ($paid->wasReplayed) {
+                $bar->advance();
+
+                continue;
+            }
+
             // Some paid orders are reversed (treated as a mistake).
             if ($this->roll($reversalRate)) {
-                $this->reverse($paid);
+                $this->reverse($paid->transaction);
                 $bar->advance();
 
                 continue; // a reversed order does not continue its lifecycle
@@ -235,7 +303,7 @@ final class SimulateCommand extends Command
         int $total,
         int $sellerNet,
         int $commission,
-    ): Transaction {
+    ): PostingResult {
         $make = fn (): SimOrderPaidPosting => new SimOrderPaidPosting(
             orderId: $orderId,
             ledgerSlug: $slug,
@@ -249,14 +317,17 @@ final class SimulateCommand extends Command
 
         $result = $this->postOnce($make());
 
-        // Mirror into the shadow only on a genuine first post.
-        $this->shadow->apply($this->platform['platform.cash.usd']->id, EntryDirection::Debit, $total);
-        $this->shadow->apply($seller['escrow']->id, EntryDirection::Credit, $sellerNet);
-        $this->shadow->apply($this->platform['platform.revenue.commission.usd']->id, EntryDirection::Credit, $commission);
+        // Mirror into the shadow only on a genuine first post. A replay must
+        // not move money — see postOnce() and the maybeReplay() docblock.
+        if (! $result->wasReplayed) {
+            $this->shadow->apply($this->platform['platform.cash.usd']->id, EntryDirection::Debit, $total);
+            $this->shadow->apply($seller['escrow']->id, EntryDirection::Credit, $sellerNet);
+            $this->shadow->apply($this->platform['platform.revenue.commission.usd']->id, EntryDirection::Credit, $commission);
 
-        $this->maybeReplay($make());
+            $this->maybeReplay($make());
+        }
 
-        return $result->transaction;
+        return $result;
     }
 
     /**
@@ -277,12 +348,14 @@ final class SimulateCommand extends Command
             sellerNet: Money::of($sellerNet, $currency),
         );
 
-        $this->postOnce($make());
+        $result = $this->postOnce($make());
 
-        $this->shadow->apply($seller['escrow']->id, EntryDirection::Debit, $sellerNet);
-        $this->shadow->apply($seller['available']->id, EntryDirection::Credit, $sellerNet);
+        if (! $result->wasReplayed) {
+            $this->shadow->apply($seller['escrow']->id, EntryDirection::Debit, $sellerNet);
+            $this->shadow->apply($seller['available']->id, EntryDirection::Credit, $sellerNet);
 
-        $this->maybeReplay($make());
+            $this->maybeReplay($make());
+        }
     }
 
     /**
@@ -306,13 +379,15 @@ final class SimulateCommand extends Command
             commissionClaw: Money::of($commissionClaw, $currency),
         );
 
-        $this->postOnce($make());
+        $result = $this->postOnce($make());
 
-        $this->shadow->apply($seller['escrow']->id, EntryDirection::Debit, $refundAmount);
-        $this->shadow->apply($this->platform['platform.revenue.commission.usd']->id, EntryDirection::Debit, $commissionClaw);
-        $this->shadow->apply($this->platform['platform.cash.usd']->id, EntryDirection::Credit, $refundAmount + $commissionClaw);
+        if (! $result->wasReplayed) {
+            $this->shadow->apply($seller['escrow']->id, EntryDirection::Debit, $refundAmount);
+            $this->shadow->apply($this->platform['platform.revenue.commission.usd']->id, EntryDirection::Debit, $commissionClaw);
+            $this->shadow->apply($this->platform['platform.cash.usd']->id, EntryDirection::Credit, $refundAmount + $commissionClaw);
 
-        $this->maybeReplay($make());
+            $this->maybeReplay($make());
+        }
     }
 
     /**
@@ -333,12 +408,14 @@ final class SimulateCommand extends Command
             amount: Money::of($amount, $currency),
         );
 
-        $this->postOnce($make());
+        $result = $this->postOnce($make());
 
-        $this->shadow->apply($seller['available']->id, EntryDirection::Debit, $amount);
-        $this->shadow->apply($this->platform['platform.cash.usd']->id, EntryDirection::Credit, $amount);
+        if (! $result->wasReplayed) {
+            $this->shadow->apply($seller['available']->id, EntryDirection::Debit, $amount);
+            $this->shadow->apply($this->platform['platform.cash.usd']->id, EntryDirection::Credit, $amount);
 
-        $this->maybeReplay($make());
+            $this->maybeReplay($make());
+        }
     }
 
     /* ---------------------------------------------------------------------
