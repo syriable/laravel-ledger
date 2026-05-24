@@ -15,7 +15,19 @@ return new class extends Migration
         $ledgersTable = config('ledger.table_names.ledgers', 'ledgers');
 
         Schema::create($transactionsTable, function (Blueprint $table) use ($ledgersTable, $transactionsTable) {
-            $table->uuid('id')->primary();
+            // The PK is declared as an explicit command, NOT as
+            // $table->uuid('id')->primary(). On Postgres, Laravel's fluent
+            // ->primary() on a column queues the PRIMARY KEY constraint AFTER
+            // every foreignUuid() command, so the self-referencing FK on
+            // reverses_transaction_id below fires before id has a unique
+            // index — and Postgres rejects it with
+            //   ERROR: there is no unique constraint matching given keys for
+            //   referenced table "transactions"
+            // The explicit primary command queues earlier and is emitted
+            // first; behaviour on MySQL/SQLite is unchanged.
+            $table->uuid('id');
+            $table->primary('id');
+
             $table->foreignUuid('ledger_id')->constrained($ledgersTable)->restrictOnDelete();
             $table->string('reference');
             $table->string('posting_type');
