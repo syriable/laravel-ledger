@@ -27,53 +27,38 @@ $result->transaction;   // the recorded Transaction
 $result->wasReplayed;   // true if this reference was already posted
 ```
 
+> **Status:** `1.0.0-rc.1` — API frozen for the soak period; behaviour will not change before `1.0.0` unless a critical bug demands it. See [CHANGELOG](CHANGELOG.md) and [UPGRADING](UPGRADING.md).
+
+## Requirements
+
+- PHP **8.3** or higher (64-bit)
+- Laravel **11**, **12**, or **13**
+- One of: **PostgreSQL 12+**, **MySQL 8+**, **MariaDB 10.4+**, or **SQLite 3.31+**
+
+The full CI matrix runs against PostgreSQL 16, MySQL 8, and SQLite on PHP 8.3 and 8.4.
+
 ## Installation
 
-You can install the package via Composer:
+Install the package via Composer:
 
 ```bash
 composer require syriable/laravel-ledger
 ```
 
-You can publish and run the migrations with:
+Publish and run the migrations:
 
 ```bash
 php artisan vendor:publish --tag="ledger-migrations"
 php artisan migrate
 ```
 
-You can publish the config file with:
+Optionally publish the config file:
 
 ```bash
 php artisan vendor:publish --tag="ledger-config"
 ```
 
-This is the contents of the published config file:
-
-```php
-return [
-
-    // If your app uses a single ledger, set its slug here and the
-    // HasAccounts trait will resolve it automatically.
-    'default_ledger_slug' => env('LEDGER_DEFAULT_SLUG'),
-
-    // Override table names if they collide with existing tables.
-    'table_names' => [
-        'ledgers' => 'ledgers',
-        'accounts' => 'accounts',
-        'transactions' => 'transactions',
-        'entries' => 'entries',
-        'balances' => 'balances',
-    ],
-
-    // The package's required validators always run first and cannot be
-    // removed. Anything listed here is appended after the required set.
-    'validators' => [
-        // \App\Ledger\Validators\AmountCeilingValidator::class,
-    ],
-
-];
-```
+The full config reference (every key, type, and default) lives in [`docs/05-installation-and-quickstart.md`](docs/05-installation-and-quickstart.md#configuration).
 
 ## Usage
 
@@ -244,21 +229,27 @@ See [`docs/03-invariants.md`](docs/03-invariants.md) for the full list and what 
 
 ## Documentation
 
-Full documentation lives in the [`docs/`](docs/) directory. Start with the [documentation index](docs/README.md).
+Full documentation lives in [`docs/`](docs/) — start with the [documentation index](docs/README.md). If you have never worked with a double-entry ledger, read [**The Posting Contract & Direction of Value**](docs/04-the-posting-contract.md) first.
 
-If you have never worked with a double-entry ledger, read [**The Posting Contract & Direction of Value**](docs/04-the-posting-contract.md) first — it explains debit/credit, normal balances, and the rules a Posting must follow, from scratch.
+**Start here**
 
 - [Introduction](docs/01-introduction.md) — why this package exists.
 - [Concepts](docs/02-concepts.md) — the seven concepts the package is built from.
 - [Invariants](docs/03-invariants.md) — the financial rules and what enforces each.
+
+**Build with the package**
+
 - [The Posting Contract](docs/04-the-posting-contract.md) — debit/credit direction and the determinism rules.
 - [Installation & Quickstart](docs/05-installation-and-quickstart.md) — the full lifecycle in five minutes.
 - [Postings Cookbook](docs/06-postings-cookbook.md) — a marketplace, worked end to end.
 - [Reversals vs Refunds](docs/07-reversals-and-refunds.md) — the distinction that causes the most bugs.
 - [Balances](docs/08-balances.md) — projection vs aggregation, signed balances, overdrafts.
-- [Operations](docs/09-operations.md) — verify, rebuild, drift recovery, legacy imports.
+
+**Operate & extend**
+
+- [Operations](docs/09-operations.md) — verify, rebuild, Octane, batch posting, drift recovery, legacy imports.
 - [Extension Points](docs/10-extensions.md) — the five ways to extend the package.
-- [Events & Exceptions](docs/11-events-and-exceptions.md) — every event and exception.
+- [Events & Exceptions](docs/11-events-and-exceptions.md) — every event and exception, plus listener guidance.
 - [Anti-features](docs/12-anti-features.md) — what the package will never do.
 - [Testing](docs/13-testing.md) — how to test a system built on the package.
 - [FAQ](docs/14-faq.md) — quick answers to common questions.
@@ -269,9 +260,16 @@ If you have never worked with a double-entry ledger, read [**The Posting Contrac
 composer test
 ```
 
+The full suite runs against SQLite by default. To exercise the real-database CHECK constraints locally:
+
+```bash
+DB_DRIVER=pgsql DB_HOST=127.0.0.1 DB_DATABASE=ledger_test DB_USERNAME=postgres composer test
+DB_DRIVER=mysql DB_HOST=127.0.0.1 DB_DATABASE=ledger_test DB_USERNAME=root  composer test
+```
+
 ## Changelog
 
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
+See [CHANGELOG](CHANGELOG.md). Upgrading from `0.9.x` is covered in [UPGRADING.md](UPGRADING.md) — most installs need only `php artisan migrate`.
 
 ## Contributing
 
