@@ -6,7 +6,6 @@ namespace Syriable\Ledger\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Syriable\Ledger\Enums\EntryDirection;
 use Syriable\Ledger\Models\Account;
 use Syriable\Ledger\Models\Balance;
 use Syriable\Ledger\Models\Entry;
@@ -20,6 +19,10 @@ use Syriable\Ledger\Recording\Clock;
  * rebuilds it from the entries table. Since entries are the source of truth,
  * this is always safe — it produces the same projection the recorder would
  * have produced incrementally.
+ *
+ * Implementation: one DELETE + one INSERT...SELECT per ledger, regardless
+ * of how many accounts or entries the ledger contains. Safe to run on
+ * large ledgers without OOM or N+1 amplification.
  *
  * Wrapped in a DB transaction so a failure mid-rebuild leaves the projection
  * unchanged rather than half-built.
@@ -68,45 +71,36 @@ final class RebuildBalancesCommand extends Command
         $this->components->info("Rebuilding balances for ledger: {$ledger->slug}");
 
         $balancesTable = (new Balance)->getTable();
+        $accountsTable = (new Account)->getTable();
+        $entriesTable = (new Entry)->getTable();
 
-        // Clear all balances belonging to this ledger's accounts.
+        // 1. Clear all balances belonging to this ledger's accounts.
         DB::table($balancesTable)
             ->whereIn('account_id', Account::query()->where('ledger_id', $ledger->id)->select('id'))
             ->delete();
 
-        // Recompute from entries.
-        Account::query()
-            ->where('ledger_id', $ledger->id)
-            ->chunkById(500, function ($accounts) use ($balancesTable, $now): void {
-                $rows = [];
+        // 2. Rebuild every account's row in a single INSERT ... SELECT.
+        //    The signed `balance` column is computed in SQL via CASE on
+        //    a.normal_balance, so the round-trip count is O(1) per ledger.
+        $debitsExpr = "COALESCE(SUM(CASE WHEN e.direction = 'debit'  THEN e.amount ELSE 0 END), 0)";
+        $creditsExpr = "COALESCE(SUM(CASE WHEN e.direction = 'credit' THEN e.amount ELSE 0 END), 0)";
+        $balanceExpr = "CASE WHEN a.normal_balance = 'debit' THEN ({$debitsExpr}) - ({$creditsExpr}) ELSE ({$creditsExpr}) - ({$debitsExpr}) END";
 
-                foreach ($accounts as $account) {
-                    $debits = (int) Entry::query()
-                        ->where('account_id', $account->id)
-                        ->where('direction', EntryDirection::Debit->value)
-                        ->sum('amount');
+        $select = DB::table("{$accountsTable} as a")
+            ->leftJoin("{$entriesTable} as e", 'e.account_id', '=', 'a.id')
+            ->where('a.ledger_id', $ledger->id)
+            ->groupBy('a.id', 'a.currency', 'a.normal_balance')
+            ->select('a.id as account_id')
+            ->selectRaw('a.currency as currency')
+            ->selectRaw("{$debitsExpr} as debit_total")
+            ->selectRaw("{$creditsExpr} as credit_total")
+            ->selectRaw("{$balanceExpr} as balance")
+            ->selectRaw('1 as version')
+            ->selectRaw('? as updated_at', [$now->format('Y-m-d H:i:s.u')]);
 
-                    $credits = (int) Entry::query()
-                        ->where('account_id', $account->id)
-                        ->where('direction', EntryDirection::Credit->value)
-                        ->sum('amount');
-
-                    $sign = $account->signMultiplier(EntryDirection::Debit);
-
-                    $rows[] = [
-                        'account_id' => $account->id,
-                        'currency' => $account->currency,
-                        'debit_total' => $debits,
-                        'credit_total' => $credits,
-                        'balance' => ($sign * $debits) + (-$sign * $credits),
-                        'version' => 1,
-                        'updated_at' => $now,
-                    ];
-                }
-
-                if ($rows !== []) {
-                    DB::table($balancesTable)->insert($rows);
-                }
-            });
+        DB::table($balancesTable)->insertUsing(
+            ['account_id', 'currency', 'debit_total', 'credit_total', 'balance', 'version', 'updated_at'],
+            $select,
+        );
     }
 }

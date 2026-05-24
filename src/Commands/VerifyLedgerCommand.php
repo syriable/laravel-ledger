@@ -5,12 +5,11 @@ declare(strict_types=1);
 namespace Syriable\Ledger\Commands;
 
 use Illuminate\Console\Command;
-use Syriable\Ledger\Enums\EntryDirection;
+use Illuminate\Support\Facades\DB;
 use Syriable\Ledger\Models\Account;
 use Syriable\Ledger\Models\Balance;
 use Syriable\Ledger\Models\Entry;
 use Syriable\Ledger\Models\Ledger as LedgerModel;
-use Syriable\Ledger\Models\Transaction;
 
 /**
  * php artisan ledger:verify [--ledger=slug]
@@ -20,6 +19,11 @@ use Syriable\Ledger\Models\Transaction;
  *   1. Every transaction is balanced (Σ debits == Σ credits).
  *   2. Every ledger has zero-sum entries.
  *   3. Every balance projection equals SUM(signed entries) for that account.
+ *
+ * All three checks run as set-based SQL aggregations — one query per
+ * check, regardless of how many accounts or transactions the ledger
+ * contains. The command is therefore safe to run against very large
+ * ledgers on a schedule.
  *
  * Exits with code 1 on any drift so it can be wired into CI and daily crons.
  */
@@ -65,48 +69,49 @@ final class VerifyLedgerCommand extends Command
         return self::SUCCESS;
     }
 
+    /**
+     * Set-based: one GROUP BY query returns every imbalanced transaction.
+     */
     private function verifyTransactionsBalanced(LedgerModel $ledger): int
     {
-        $failures = 0;
+        $entriesTable = (new Entry)->getTable();
 
-        Transaction::query()
+        $debitsExpr = "COALESCE(SUM(CASE WHEN direction = 'debit'  THEN amount ELSE 0 END), 0)";
+        $creditsExpr = "COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE 0 END), 0)";
+
+        $rows = DB::table($entriesTable)
+            ->select('transaction_id')
+            ->selectRaw("{$debitsExpr} AS debits")
+            ->selectRaw("{$creditsExpr} AS credits")
             ->where('ledger_id', $ledger->id)
-            ->select('id')
-            ->chunkById(500, function ($chunk) use (&$failures): void {
-                foreach ($chunk as $tx) {
-                    $debits = (int) Entry::query()
-                        ->where('transaction_id', $tx->id)
-                        ->where('direction', EntryDirection::Debit->value)
-                        ->sum('amount');
+            ->groupBy('transaction_id')
+            ->havingRaw("{$debitsExpr} <> {$creditsExpr}")
+            ->get();
 
-                    $credits = (int) Entry::query()
-                        ->where('transaction_id', $tx->id)
-                        ->where('direction', EntryDirection::Credit->value)
-                        ->sum('amount');
+        foreach ($rows as $row) {
+            $this->components->error(
+                "Transaction {$row->transaction_id} is imbalanced: debits={$row->debits} credits={$row->credits}"
+            );
+        }
 
-                    if ($debits !== $credits) {
-                        $this->components->error(
-                            "Transaction {$tx->id} is imbalanced: debits={$debits} credits={$credits}"
-                        );
-                        $failures++;
-                    }
-                }
-            });
-
-        return $failures;
+        return $rows->count();
     }
 
+    /**
+     * Single-row aggregation across the whole ledger.
+     */
     private function verifyLedgerZeroSum(LedgerModel $ledger): int
     {
-        $debits = (int) Entry::query()
-            ->where('ledger_id', $ledger->id)
-            ->where('direction', EntryDirection::Debit->value)
-            ->sum('amount');
+        $entriesTable = (new Entry)->getTable();
 
-        $credits = (int) Entry::query()
+        $row = DB::table($entriesTable)
+            ->selectRaw("COALESCE(SUM(CASE WHEN direction = 'debit'  THEN amount ELSE 0 END), 0) AS debits")
+            ->selectRaw("COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount ELSE 0 END), 0) AS credits")
             ->where('ledger_id', $ledger->id)
-            ->where('direction', EntryDirection::Credit->value)
-            ->sum('amount');
+            ->first();
+
+        $debits = (int) ($row->debits ?? 0);
+        $credits = (int) ($row->credits ?? 0);
 
         if ($debits !== $credits) {
             $this->components->error(
@@ -119,41 +124,39 @@ final class VerifyLedgerCommand extends Command
         return 0;
     }
 
+    /**
+     * Set-based: a single LEFT JOIN aggregation reports every account whose
+     * projection disagrees with the sum-of-entries computed expectation.
+     */
     private function verifyBalancesMatchEntries(LedgerModel $ledger): int
     {
-        $failures = 0;
+        $accountsTable = (new Account)->getTable();
+        $entriesTable = (new Entry)->getTable();
+        $balancesTable = (new Balance)->getTable();
 
-        Account::query()
-            ->where('ledger_id', $ledger->id)
-            ->chunkById(500, function ($accounts) use (&$failures): void {
-                foreach ($accounts as $account) {
-                    $debits = (int) Entry::query()
-                        ->where('account_id', $account->id)
-                        ->where('direction', EntryDirection::Debit->value)
-                        ->sum('amount');
+        $debitsExpr = "COALESCE(SUM(CASE WHEN e.direction = 'debit'  THEN e.amount ELSE 0 END), 0)";
+        $creditsExpr = "COALESCE(SUM(CASE WHEN e.direction = 'credit' THEN e.amount ELSE 0 END), 0)";
+        $expectedExpr = "CASE WHEN a.normal_balance = 'debit' THEN ({$debitsExpr}) - ({$creditsExpr}) ELSE ({$creditsExpr}) - ({$debitsExpr}) END";
+        $projectedExpr = 'COALESCE(b.balance, 0)';
 
-                    $credits = (int) Entry::query()
-                        ->where('account_id', $account->id)
-                        ->where('direction', EntryDirection::Credit->value)
-                        ->sum('amount');
+        $rows = DB::table("{$accountsTable} as a")
+            ->leftJoin("{$entriesTable} as e", 'e.account_id', '=', 'a.id')
+            ->leftJoin("{$balancesTable} as b", 'b.account_id', '=', 'a.id')
+            ->where('a.ledger_id', $ledger->id)
+            ->groupBy('a.id', 'a.code', 'a.normal_balance', 'b.balance')
+            ->select('a.id', 'a.code')
+            ->selectRaw("{$projectedExpr} AS projected")
+            ->selectRaw("{$expectedExpr} AS expected")
+            ->havingRaw("{$projectedExpr} <> {$expectedExpr}")
+            ->get();
 
-                    $sign = $account->signMultiplier(EntryDirection::Debit);
-                    $expected = ($sign * $debits) + (-$sign * $credits);
+        foreach ($rows as $row) {
+            $this->components->error(
+                "Account {$row->code} ({$row->id}) projection drift: ".
+                "projected={$row->projected} expected={$row->expected}"
+            );
+        }
 
-                    /** @var Balance|null $projection */
-                    $projection = Balance::query()->where('account_id', $account->id)->first();
-                    $projected = $projection !== null ? $projection->balance : 0;
-
-                    if ($projected !== $expected) {
-                        $this->components->error(
-                            "Account {$account->code} ({$account->id}) projection drift: ".
-                            "projected={$projected} expected={$expected}"
-                        );
-                        $failures++;
-                    }
-                }
-            });
-
-        return $failures;
+        return $rows->count();
     }
 }
